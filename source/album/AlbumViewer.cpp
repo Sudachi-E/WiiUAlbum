@@ -55,7 +55,7 @@ void Album::ExecuteDelete() {
     auto& item = mAllItems[idx];
 
     remove(item.path.c_str());
-    WHBLogPrintf("[ALBUM] Deleted: %s", item.path.c_str());
+    OSReport("[ALBUM] Deleted: %s", item.path.c_str());
 
     StopThumbWorkers();
 
@@ -110,11 +110,11 @@ void Album::SaveScreenshot() {
     SDL_FreeSurface(frame);
 
     if (ok) {
-        WHBLogPrintf("[ALBUM] Screenshot saved: %s", outPath.c_str());
+        OSReport("[ALBUM] Screenshot saved: %s", outPath.c_str());
         mSaveNotifEndTime = SDL_GetTicks() + 2000;
         mPendingRefresh = true;
     } else {
-        WHBLogPrintf("[ALBUM] Failed to save screenshot: %s", outPath.c_str());
+        OSReport("[ALBUM] Failed to save screenshot: %s", outPath.c_str());
     }
 }
 
@@ -373,18 +373,37 @@ void Album::UpdateVideoPlayback() {
                 }
             }
             mVideoDecoder.ReadFrame(mVideoTexture);
-        } else if (avDrift < mFrameDelay / 1000.0) {
+        } else {
             mVideoDecoder.ReadFrame(mVideoTexture);
         }
     } else {
         double audioPTS = mVideoDecoder.GetAudioTime();
         double avDrift = videoPTS - audioPTS;
 
-        static Uint32 lastLog = 0;
-        if (currentTime - lastLog > 5000) {
-            WHBLogPrintf("[ALBUM] UpdateVideoPlayback: A-V sync vPTS=%.2f aPTS=%.2f drift=%.2f isAudioPlaying=%d",
-                 videoPTS, audioPTS, avDrift, mVideoDecoder.IsAudioPlaying());
-            lastLog = currentTime;
+        static double prevSyncAudioPTS = 0.0;
+        static Uint32 audioStallStart = 0;
+        bool audioStalled = false;
+
+        if (audioPTS == prevSyncAudioPTS) {
+            if (audioStallStart == 0) audioStallStart = currentTime;
+            if (currentTime - audioStallStart > 2000 && mVideoDecoder.GetAudioQueueSize() == 0)
+                audioStalled = true;
+        } else {
+            audioStallStart = 0;
+        }
+        prevSyncAudioPTS = audioPTS;
+
+        if (audioStalled) {
+            double elapsedWallTime = (currentTime - mWallClockStartTime) / 1000.0;
+            double expectedVideoPTS = mWallClockStartPTS + elapsedWallTime;
+            avDrift = videoPTS - expectedVideoPTS;
+        } else {
+            static Uint32 lastLog = 0;
+            if (currentTime - lastLog > 5000) {
+                WHBLogPrintf("[ALBUM] UpdateVideoPlayback: A-V sync vPTS=%.2f aPTS=%.2f drift=%.2f isAudioPlaying=%d",
+                     videoPTS, audioPTS, avDrift, mVideoDecoder.IsAudioPlaying());
+                lastLog = currentTime;
+            }
         }
 
         if (avDrift < -0.1) {
@@ -588,15 +607,16 @@ void Album::DrawViewer() {
                 strftime(dtbuf, sizeof(dtbuf), "%Y-%m-%d  %H:%M:%S", tminfo);
                 Gfx::Print(px + PW / 2, 66, 22, Gfx::COLOR_TEXT_DIM, dtbuf, Gfx::ALIGN_CENTER);
             }
+            Gfx::Print(px + PW / 2, 96, 18, Gfx::COLOR_TEXT_DIM, panelItem.filename.c_str(), Gfx::ALIGN_CENTER);
         }
-        Gfx::DrawRectFilled(px + 16, 94, PW - 32, 2, {0x66, 0x66, 0x66, 0xff});
+        Gfx::DrawRectFilled(px + 16, 118, PW - 32, 2, {0x66, 0x66, 0x66, 0xff});
 
         const char* opts[4];
         int numOpts = 0;
         if (isVideo) { opts[0] = "Clip Video"; opts[1] = "Save Frame as PNG"; opts[2] = "Transfer to Device"; opts[3] = "Delete"; numOpts = 4; }
         else         { opts[0] = "Enter Text"; opts[1] = "Transfer to Device"; opts[2] = "Delete"; numOpts = 3; }
         int itemH = 64;
-        int startY = 110;
+        int startY = 134;
         for (int i = 0; i < numOpts; i++) {
             int oy = startY + i * itemH;
             bool sel = (i == mViewerSidePanelSel);

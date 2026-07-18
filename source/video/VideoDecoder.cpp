@@ -704,7 +704,14 @@ SDL_Surface* VideoDecoder::GetCurrentFrameAsSurface() {
 
 int VideoDecoder::GetVideoQueueSize() {
     SDL_LockMutex(mPacketMutex);
-    int size = mVideoPacketQueue.size();
+    int size = (int)mVideoPacketQueue.size();
+    SDL_UnlockMutex(mPacketMutex);
+    return size;
+}
+
+int VideoDecoder::GetAudioQueueSize() {
+    SDL_LockMutex(mPacketMutex);
+    int size = (int)mAudioPacketQueue.size();
     SDL_UnlockMutex(mPacketMutex);
     return size;
 }

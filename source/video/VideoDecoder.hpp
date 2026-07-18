@@ -44,6 +44,7 @@ public:
 
     SDL_Surface* GetCurrentFrameAsSurface();
     int GetVideoQueueSize();
+    int GetAudioQueueSize();
 
     void StartAudio();
     void StopAudio();

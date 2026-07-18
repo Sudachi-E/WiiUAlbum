@@ -111,7 +111,7 @@ static int ScanDir(const std::string& dirPath, MediaType type,
 Album::Album(const char* sdRoot) {
     SDL_AtomicSet(&mClipEncodingDone, 1);
     mPathScreenshots = std::string(sdRoot) + "/wiiu/screenshots";
-    mPathVideos      = std::string(sdRoot) + "/wiiu/videos";
+    mPathVideos      = std::string(sdRoot) + "/wiiu/screencaptures";
 
     WHBLogPrintf("[ALBUM] Screenshot path: %s", mPathScreenshots.c_str());
     WHBLogPrintf("[ALBUM] Video path:      %s", mPathVideos.c_str());

@@ -7,7 +7,7 @@ A media gallery for the Nintendo Wii U. Browse, view, edit, and wirelessly trans
 ## Features
 
 ### Gallery View
-- Finds screenshots and videos stored in : `/fs/vol/external01/wiiu/screenshots` [Screenshot plugin](https://github.com/wiiu-env/ScreenshotWUPS/) / `/fs/vol/external01/wiiu/videos` [ScreenCapture Plugin](https://github.com/Sudachi-E/ScreenCapturePlugin)
+- Finds screenshots and videos stored in : `/fs/vol/external01/wiiu/screenshots` [Screenshot plugin](https://github.com/wiiu-env/ScreenshotWUPS/) / `/fs/vol/external01/wiiu/screencaptures` [ScreenCapture Plugin](https://github.com/Sudachi-E/ScreenCapturePlugin)
 - Filter by media type, application name, sort by date (newest/oldest)
 
 ### Video Clipping
