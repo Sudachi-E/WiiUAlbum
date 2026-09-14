@@ -859,22 +859,28 @@ SDL_Surface* VideoDecoder::ExtractThumbnail(const std::string& path, uint32_t* o
     AVFrame* frame = av_frame_alloc();
     AVFrame* rgbFrame = av_frame_alloc();
 
-    uint8_t* rgbBuffer = (uint8_t*)av_malloc(
-        av_image_get_buffer_size(AV_PIX_FMT_RGB24, decCtx->width, decCtx->height, 1));
-    av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, rgbBuffer,
-                         AV_PIX_FMT_RGB24, decCtx->width, decCtx->height, 1);
-
-    struct SwsContext* swsCtx = sws_getContext(
-        decCtx->width, decCtx->height, decCtx->pix_fmt,
-        decCtx->width, decCtx->height, AV_PIX_FMT_RGB24,
-        SWS_BILINEAR, nullptr, nullptr, nullptr);
-
     SDL_Surface* surface = nullptr;
     while (av_read_frame(fmtCtx, pkt) >= 0) {
         if (pkt->stream_index == videoStream) {
             avcodec_send_packet(decCtx, pkt);
             int ret = avcodec_receive_frame(decCtx, frame);
             if (ret == 0) {
+                enum AVPixelFormat srcFmt = (enum AVPixelFormat)frame->format;
+                if (srcFmt == AV_PIX_FMT_NONE)
+                    break;
+
+                struct SwsContext* swsCtx = sws_getContext(
+                    decCtx->width, decCtx->height, srcFmt,
+                    decCtx->width, decCtx->height, AV_PIX_FMT_RGB24,
+                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+                if (!swsCtx)
+                    break;
+
+                uint8_t* rgbBuffer = (uint8_t*)av_malloc(
+                    av_image_get_buffer_size(AV_PIX_FMT_RGB24, decCtx->width, decCtx->height, 1));
+                av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, rgbBuffer,
+                                     AV_PIX_FMT_RGB24, decCtx->width, decCtx->height, 1);
+
                 sws_scale(swsCtx, frame->data, frame->linesize, 0, decCtx->height,
                           rgbFrame->data, rgbFrame->linesize);
 
@@ -887,6 +893,9 @@ SDL_Surface* VideoDecoder::ExtractThumbnail(const std::string& path, uint32_t* o
                                decCtx->width * 3);
                     }
                 }
+
+                sws_freeContext(swsCtx);
+                av_free(rgbBuffer);
                 break;
             }
             if (ret == AVERROR(EAGAIN))
@@ -896,8 +905,6 @@ SDL_Surface* VideoDecoder::ExtractThumbnail(const std::string& path, uint32_t* o
         av_packet_unref(pkt);
     }
 
-    sws_freeContext(swsCtx);
-    av_free(rgbBuffer);
     av_frame_free(&rgbFrame);
     av_frame_free(&frame);
     av_packet_free(&pkt);
