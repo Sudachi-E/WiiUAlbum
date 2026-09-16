@@ -208,7 +208,7 @@ void Album::UpdateViewer(const Input& input) {
 
     if (isVideo) {
         // Video playback controls
-        if (mVideoPlaying && !mVideoPaused) {
+        if (mVideoPlaying) {
             float rx = input.GetRightStickX();
             if (rx > 0.3f || rx < -0.3f) {
                 mSeekAccum += rx * rx * rx * 2.0;
@@ -220,11 +220,12 @@ void Album::UpdateViewer(const Input& input) {
                 if (newTime < 0) newTime = 0;
                 double dur = mVideoDecoder.GetDuration();
                 if (dur > 0 && newTime > dur) newTime = dur;
-                mVideoDecoder.Seek(newTime);
-                mWallClockStartTime = 0;
+                SeekVideo(newTime);
                 mSeekAccum = 0.0;
             }
+        }
 
+        if (mVideoPlaying && !mVideoPaused) {
             int cur   = mViewerItem;
             int total = (int)mFiltered.size();
             int next  = -1;
@@ -333,6 +334,23 @@ void Album::UpdateViewer(const Input& input) {
             } else {
                 CloseViewer();
             }
+        }
+    }
+}
+
+void Album::SeekVideo(double seconds) {
+    mVideoDecoder.Seek(seconds);
+    mWallClockStartTime = 0;
+
+    if (mVideoPaused && mVideoTexture) {
+        for (int i = 0; i < 30; i++) {
+            if (mVideoDecoder.GetVideoQueueSize() > 0) break;
+            SDL_Delay(5);
+        }
+        int guard = 0;
+        while (guard++ < 90 && mVideoDecoder.GetVideoQueueSize() > 0) {
+            mVideoDecoder.ReadFrame(mVideoTexture);
+            if (mVideoDecoder.GetCurrentTime() >= seconds - 0.02) break;
         }
     }
 }

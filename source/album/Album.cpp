@@ -1367,8 +1367,7 @@ void Album::HandlePointer(const Input& input) {
                 }
             }
             if (mVideoBarSeeking && !aDown) {
-                mVideoDecoder.Seek(mVideoBarSeekTarget);
-                mWallClockStartTime = 0;
+                SeekVideo(mVideoBarSeekTarget);
                 mVideoBarSeeking = false;
             }
         }

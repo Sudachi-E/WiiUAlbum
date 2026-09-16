@@ -115,6 +115,7 @@ private:
     void DrawViewer();
     void UpdateViewer(const Input& input);
     void UpdateVideoPlayback();
+    void SeekVideo(double seconds);
     bool OpenVideoItem(int filteredIdx, bool startAudio = true);
     void NavigateToItem(int nextFilteredIdx, bool resetZoom = false);
 
