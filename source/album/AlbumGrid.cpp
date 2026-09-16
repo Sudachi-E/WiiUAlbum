@@ -153,15 +153,21 @@ void Album::UpdateTransferModeOverlay(const Input& input) {
 }
 
 void Album::DrawHeader() {
-    SDL_Color hdrBg  = mMultiSelect ? SDL_Color{0xff, 0xe8, 0xe8, 0xff} : Gfx::COLOR_HEADER_BG;
-    SDL_Color hdrSep = mMultiSelect ? Gfx::COLOR_DELETE : Gfx::COLOR_SEPARATOR;
+    const auto& th = Gfx::Theme();
+    SDL_Color hdrBg;
+    if (mMultiSelect) {
+        hdrBg = Gfx::IsDarkMode() ? SDL_Color{0x4a, 0x1c, 0x1c, 0xff} : SDL_Color{0xff, 0xe8, 0xe8, 0xff};
+    } else {
+        hdrBg = th.headerBg;
+    }
+    SDL_Color hdrSep = mMultiSelect ? Gfx::COLOR_DELETE : th.separator;
     Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, HEADER_H, hdrBg);
     Gfx::DrawRectFilled(0, HEADER_H - 1, Gfx::SCREEN_WIDTH, 1, hdrSep);
 
     int tx = 30, ty = HEADER_H / 2;
-    Gfx::DrawRectRounded(tx, ty - 14, 28, 22, 4, Gfx::COLOR_TEXT);
-    Gfx::DrawCircleFilled(tx + 14, ty - 3, 6, Gfx::COLOR_HEADER_BG);
-    Gfx::Print(tx + 38, ty, 30, Gfx::COLOR_TEXT, "Album",
+    Gfx::DrawRectRounded(tx, ty - 14, 28, 22, 4, th.text);
+    Gfx::DrawCircleFilled(tx + 14, ty - 3, 6, th.headerBg);
+    Gfx::Print(tx + 38, ty, 30, th.text, "Album",
                Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
     if (mMultiSelect) {
@@ -169,7 +175,8 @@ void Album::DrawHeader() {
         for (bool s : mSelected) if (s) selCount++;
         std::string selHint = std::to_string(selCount) + " selected   "
             + Glyphs::A + " Select   " + Glyphs::X + " Delete";
-        Gfx::Print(Gfx::SCREEN_WIDTH - 30, ty, 26, Gfx::COLOR_DELETE,
+        SDL_Color selColor = Gfx::IsDarkMode() ? Gfx::COLOR_WHITE : th.text;
+        Gfx::Print(Gfx::SCREEN_WIDTH - 30, ty, 26, selColor,
                    selHint, Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
     } else if (mTransferMultiSelect) {
         std::string selHint = std::to_string(mTransferSelectCount) + "/5 selected   "
@@ -183,18 +190,25 @@ void Album::DrawHeader() {
                    selHint, Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
     } else {
         std::string info = GetSortStr() + "  |  " + GetFilterStr() + "  (" + GetCountStr() + ")";
-        Gfx::Print(Gfx::SCREEN_WIDTH - 30, ty, 26, Gfx::COLOR_TEXT_DIM, info,
+        Gfx::Print(Gfx::SCREEN_WIDTH - 30, ty, 26, th.textDim, info,
                    Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
     }
 }
 
 void Album::DrawFooter() {
+    const auto& th = Gfx::Theme();
     int y = Gfx::SCREEN_HEIGHT - FOOTER_H;
-    SDL_Color ftrBg  = Gfx::COLOR_FOOTER_BG;
-    SDL_Color ftrSep = Gfx::COLOR_SEPARATOR;
-    if (mMultiSelect) { ftrBg = {0xff, 0xe8, 0xe8, 0xff}; ftrSep = Gfx::COLOR_DELETE; }
-    else if (mTransferMultiSelect) { ftrBg = {0xe0, 0xf4, 0xfb, 0xff}; ftrSep = Gfx::COLOR_ACCENT; }
-    else if (mTransferMode == TransferMode::Single) { ftrBg = {0xe0, 0xf4, 0xfb, 0xff}; ftrSep = Gfx::COLOR_ACCENT; }
+    SDL_Color ftrBg;
+    if (mMultiSelect) {
+        ftrBg = Gfx::IsDarkMode() ? SDL_Color{0x4a, 0x1c, 0x1c, 0xff} : SDL_Color{0xff, 0xe8, 0xe8, 0xff};
+    } else if (mTransferMultiSelect) {
+        ftrBg = th.accentBg;
+    } else if (mTransferMode == TransferMode::Single) {
+        ftrBg = th.accentBg;
+    } else {
+        ftrBg = th.footerBg;
+    }
+    SDL_Color ftrSep = mMultiSelect ? Gfx::COLOR_DELETE : th.separator;
     Gfx::DrawRectFilled(0, y, Gfx::SCREEN_WIDTH, FOOTER_H, ftrBg);
     Gfx::DrawRectFilled(0, y, Gfx::SCREEN_WIDTH, 1, ftrSep);
 
@@ -207,34 +221,42 @@ void Album::DrawFooter() {
     if (mTransferMultiSelect) {
         int bx = cx - 80;
         Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
-        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, Gfx::COLOR_TEXT, "Cancel",
+        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, th.text, "Cancel",
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
     } else if (mTransferMode == TransferMode::Single) {
         int bx = cx - 80;
         Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
-        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, Gfx::COLOR_TEXT, "Cancel",
+        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, th.text, "Cancel",
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
     } else {
-        int bx = cx - 180;
-        Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
-        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, Gfx::COLOR_TEXT, "Back",
-                   Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+        if (mMultiSelect) {
+            int bx = cx - 80;
+            Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
+            Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, th.text, "Back",
+                       Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+        } else {
+            int bx = cx - 180;
+            Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
+            Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, th.text, "Back",
+                       Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
-        bx = cx - 80;
-        Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_A, Glyphs::A, Gfx::ALIGN_CENTER);
-        Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, Gfx::COLOR_TEXT, "OK",
-                   Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+            bx = cx - 80;
+            Gfx::PrintIcon(bx, cy, ICON_SZ, Gfx::COLOR_BTN_A, Glyphs::A, Gfx::ALIGN_CENTER);
+            Gfx::Print(bx + ICON_SZ / 2 + GAP, cy, LBL_SZ, th.text, "OK",
+                       Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+        }
     }
 }
 
 void Album::DrawSidebarItem(int idx, int x, int y, int size,
                              const std::string& /*icon*/, const std::string& label,
                              bool selected, bool hasCircle) {
+    const auto& th = Gfx::Theme();
     int cx = x + size / 2;
     int cy = y + size / 2;
 
     if (selected && hasCircle) {
-        Gfx::DrawCircleFilled(cx, cy, size / 2 + 4, Gfx::COLOR_SIDEBAR_SEL);
+        Gfx::DrawCircleFilled(cx, cy, size / 2 + 4, th.sidebarSel);
         Gfx::DrawRectRoundedOutline(cx - size / 2 - 4, cy - size / 2 - 4,
                                     size + 8, size + 8, size / 2 + 4,
                                     Gfx::COLOR_ACCENT, 3);
@@ -242,18 +264,18 @@ void Album::DrawSidebarItem(int idx, int x, int y, int size,
         int bw = Gfx::GetTextWidth(26, label) + 24;
         int bh = 40;
         int by = cy - bh / 2;
-        Gfx::DrawRectRounded(bx, by, bw, bh, 8, Gfx::COLOR_SIDEBAR_SEL);
+        Gfx::DrawRectRounded(bx, by, bw, bh, 8, th.sidebarSel);
         Gfx::DrawRectRoundedOutline(bx, by, bw, bh, 8, Gfx::COLOR_ACCENT, 2);
         Gfx::Print(bx + bw / 2, cy, 26, Gfx::COLOR_ACCENT, label, Gfx::ALIGN_CENTER);
     }
 
-    SDL_Color iconColor = selected ? Gfx::COLOR_ACCENT : Gfx::COLOR_TEXT_DIM;
+    SDL_Color iconColor = selected ? Gfx::COLOR_ACCENT : th.textDim;
 
     int ix = cx - 11, iy = cy - 11, iw = 22, ih = 22;
     switch (idx) {
         case 0:
             Gfx::DrawRectFilled(ix, iy, iw, ih, iconColor);
-            Gfx::DrawRectFilled(ix + 3, iy + 3, iw - 6, ih - 6, Gfx::COLOR_SIDEBAR_BG);
+            Gfx::DrawRectFilled(ix + 3, iy + 3, iw - 6, ih - 6, th.sidebarBg);
             Gfx::DrawLine(ix + 5, iy + 14, ix + 9, iy + 17, iconColor);
             Gfx::DrawLine(ix + 9, iy + 17, ix + 17, iy + 5, iconColor);
             break;
@@ -290,7 +312,7 @@ void Album::DrawSidebarItem(int idx, int x, int y, int size,
                 Gfx::DrawRectFilled(tx, ty, 5, 5, iconColor);
             }
             Gfx::DrawCircleFilled(cx, cy, 7, iconColor);
-            Gfx::DrawCircleFilled(cx, cy, 3, Gfx::COLOR_SIDEBAR_BG);
+            Gfx::DrawCircleFilled(cx, cy, 3, th.sidebarBg);
             break;
         }
         case 4:
@@ -305,8 +327,9 @@ void Album::DrawSidebarItem(int idx, int x, int y, int size,
 }
 
 void Album::DrawSidebar() {
-    Gfx::DrawRectFilled(0, 0, SIDEBAR_W, Gfx::SCREEN_HEIGHT, Gfx::COLOR_SIDEBAR_BG);
-    Gfx::DrawRectFilled(SIDEBAR_W - 1, 0, 1, Gfx::SCREEN_HEIGHT, Gfx::COLOR_SEPARATOR);
+    const auto& th = Gfx::Theme();
+    Gfx::DrawRectFilled(0, 0, SIDEBAR_W, Gfx::SCREEN_HEIGHT, th.sidebarBg);
+    Gfx::DrawRectFilled(SIDEBAR_W - 1, 0, 1, Gfx::SCREEN_HEIGHT, th.separator);
 
     int iconSize = 44;
     int spacing  = 80;
@@ -323,15 +346,16 @@ void Album::DrawSidebar() {
 }
 
 void Album::DrawGrid() {
+    const auto& th = Gfx::Theme();
     if (mFiltered.empty()) {
         int cx = GRID_X + GRID_W / 2;
         int cy = GRID_Y + (GRID_H > 300 ? GRID_H / 2 - 80 : GRID_Y + 30);
-        Gfx::Print(cx, cy, 30, Gfx::COLOR_TEXT_DIM, "No items found.", Gfx::ALIGN_CENTER);
+        Gfx::Print(cx, cy, 30, th.textDim, "No items found.", Gfx::ALIGN_CENTER);
         cy += 44;
-        Gfx::Print(cx, cy, 22, Gfx::COLOR_TEXT_LIGHT,
+        Gfx::Print(cx, cy, 22, th.textLight,
                    "Screenshots: " + mPathScreenshots, Gfx::ALIGN_CENTER);
         cy += 32;
-        Gfx::Print(cx, cy, 22, Gfx::COLOR_TEXT_LIGHT,
+        Gfx::Print(cx, cy, 22, th.textLight,
                    "Videos:      " + mPathVideos, Gfx::ALIGN_CENTER);
         cy += 44;
         if (!mScanDiagnostics.empty()) {
@@ -377,9 +401,8 @@ void Album::DrawGrid() {
 
             Gfx::DrawRectFilled(x + 4, y + 4, THUMB_W, THUMB_H, Gfx::COLOR_SHADOW);
 
-            SDL_Color bg = {0x33, 0x33, 0x33, 0xff};
             Gfx::DrawRectFilled(x + (cellW - THUMB_W) / 2, y + (cellH - THUMB_H) / 2,
-                               THUMB_W, THUMB_H, bg);
+                               THUMB_W, THUMB_H, th.thumbPlaceholder);
 
             if (item.thumbnail) {
                 Gfx::DrawTextureCover(item.thumbnail, x + (cellW - THUMB_W) / 2,
@@ -402,7 +425,7 @@ void Album::DrawGrid() {
                 int cx2 = x + THUMB_W - 20;
                 int cy2 = y + 14;
                 bool sel = mSelected[fi];
-                SDL_Color color = sel ? Gfx::COLOR_DELETE : Gfx::COLOR_TEXT_DIM;
+                SDL_Color color = sel ? Gfx::COLOR_DELETE : th.textDim;
 
                 Gfx::DrawCircleFilled(cx2, cy2, 16, color);
                 Gfx::DrawCircleFilled(cx2, cy2, 13, {0xff, 0xff, 0xff, 0xff});
@@ -416,7 +439,7 @@ void Album::DrawGrid() {
                 bool sel = mTransferSelected[fi];
                 int cx2 = x + THUMB_W - 20;
                 int cy2 = y + 14;
-                SDL_Color color = sel ? Gfx::COLOR_ACCENT : Gfx::COLOR_TEXT_DIM;
+                SDL_Color color = sel ? Gfx::COLOR_ACCENT : th.textDim;
                 Gfx::DrawCircleFilled(cx2, cy2, 16, color);
                 Gfx::DrawCircleFilled(cx2, cy2, 13, {0xff, 0xff, 0xff, 0xff});
                 if (sel) {
@@ -444,7 +467,7 @@ void Album::DrawGrid() {
         float offset = (float)mScrollRow / totalRows;
         int   tbH    = (int)(sbH * thumb);
         int   tbY    = GRID_Y + (int)(sbH * offset);
-        Gfx::DrawRectFilled(sbX, GRID_Y, 6, sbH, Gfx::COLOR_SEPARATOR);
+        Gfx::DrawRectFilled(sbX, GRID_Y, 6, sbH, th.separator);
         Gfx::DrawRectFilled(sbX, tbY,    6, tbH, Gfx::COLOR_ACCENT);
     }
 }
@@ -491,39 +514,40 @@ void Album::DrawOverlay() {
         return;
     }
 
+    const auto& th = Gfx::Theme();
     int itemH = 56;
     bh = 60 + (int)opts.size() * itemH + 16;
     int bx = (Gfx::SCREEN_WIDTH - bw) / 2;
     int by = (Gfx::SCREEN_HEIGHT - bh) / 2;
 
-    Gfx::DrawRectRounded(bx, by, bw, bh, 12, {0xff, 0xff, 0xff, 0xff});
+    Gfx::DrawRectRounded(bx, by, bw, bh, 12, th.cardBg);
     Gfx::DrawRectRoundedOutline(bx, by, bw, bh, 12, Gfx::COLOR_ACCENT, 2);
 
-    Gfx::Print(bx + bw / 2, by + 30, 30, Gfx::COLOR_TEXT, title, Gfx::ALIGN_CENTER);
-    Gfx::DrawRectFilled(bx + 16, by + 54, bw - 32, 1, Gfx::COLOR_SEPARATOR);
+    Gfx::Print(bx + bw / 2, by + 30, 30, th.text, title, Gfx::ALIGN_CENTER);
+    Gfx::DrawRectFilled(bx + 16, by + 54, bw - 32, 1, th.separator);
 
     for (int i = 0; i < (int)opts.size(); i++) {
         int oy = by + 60 + i * itemH;
         if (i == mOverlaySel) {
-            Gfx::DrawRectRounded(bx + 8, oy + 4, bw - 16, itemH - 8, 8,
-                                 Gfx::COLOR_SIDEBAR_SEL);
+            Gfx::DrawRectRounded(bx + 8, oy + 4, bw - 16, itemH - 8, 8, th.sidebarSel);
         }
-        SDL_Color tc = (i == mOverlaySel) ? Gfx::COLOR_ACCENT : Gfx::COLOR_TEXT;
+        SDL_Color tc = (i == mOverlaySel) ? Gfx::COLOR_ACCENT : th.text;
         Gfx::Print(bx + bw / 2, oy + itemH / 2, 26, tc, opts[i], Gfx::ALIGN_CENTER);
     }
 }
 
 void Album::DrawDeleteConfirmDialog(const std::string& title, int bw, int bh) {
+    const auto& th = Gfx::Theme();
     Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, Gfx::SCREEN_HEIGHT,
                         {0, 0, 0, 140});
 
     int bx = (Gfx::SCREEN_WIDTH  - bw) / 2;
     int by = (Gfx::SCREEN_HEIGHT - bh) / 2;
 
-    Gfx::DrawRectRounded(bx, by, bw, bh, 12, {0xff, 0xff, 0xff, 0xff});
+    Gfx::DrawRectRounded(bx, by, bw, bh, 12, th.cardBg);
     Gfx::DrawRectRoundedOutline(bx, by, bw, bh, 12, Gfx::COLOR_ACCENT, 2);
 
-    Gfx::Print(bx + bw / 2, by + 44, 28, Gfx::COLOR_TEXT,
+    Gfx::Print(bx + bw / 2, by + 44, 28, th.text,
                title, Gfx::ALIGN_CENTER);
 
     int btnY = by + 110;
@@ -531,13 +555,13 @@ void Album::DrawDeleteConfirmDialog(const std::string& title, int bw, int bh) {
     int btnW = 160, btnH = 52;
 
     const char* labels[2] = { "Delete", "Cancel" };
-    SDL_Color colors[2]   = { {0xde, 0x3b, 0x2e, 0xff}, Gfx::COLOR_TEXT_DIM };
+    SDL_Color colors[2]   = { {0xde, 0x3b, 0x2e, 0xff}, th.textDim };
 
     for (int i = 0; i < 2; i++) {
         int btnX = bx + (bw - btnW * 2 - gap) / 2 + i * (btnW + gap);
         bool sel = (i == mOverlaySel);
         Gfx::DrawRectRounded(btnX, btnY, btnW, btnH, 8,
-                             sel ? colors[i] : Gfx::COLOR_SIDEBAR_SEL);
+                             sel ? colors[i] : th.sidebarSel);
         if (sel) {
             Gfx::DrawRectRoundedOutline(btnX, btnY, btnW, btnH, 8,
                                        Gfx::COLOR_ACCENT, 4);
@@ -549,6 +573,7 @@ void Album::DrawDeleteConfirmDialog(const std::string& title, int bw, int bh) {
 }
 
 void Album::DrawFilterPanel() {
+    const auto& th = Gfx::Theme();
     const int PW = 280;
     int startY = HEADER_H + 40;
     int spacing = 80;
@@ -564,14 +589,14 @@ void Album::DrawFilterPanel() {
     int px = SIDEBAR_W + 4;
 
     Gfx::DrawRectFilled(px + 3, py + 3, PW, ph, {0, 0, 0, 80});
-    Gfx::DrawRectRounded(px, py, PW, ph, 8, {0xf0, 0xf0, 0xf0, 0xff});
+    Gfx::DrawRectRounded(px, py, PW, ph, 8, th.panelBg);
     Gfx::DrawRectRoundedOutline(px, py, PW, ph, 8, Gfx::COLOR_ACCENT, 2);
 
     int yo = py + 10;
     for (int i = 0; i < numItems; i++) {
         if (i == sepIdx) {
             yo += 8;
-            Gfx::DrawRectFilled(px + 12, yo, PW - 24, 1, {0xcc, 0xcc, 0xcc, 0xff});
+            Gfx::DrawRectFilled(px + 12, yo, PW - 24, 1, th.separator);
             yo += 8;
             continue;
         }
@@ -595,8 +620,8 @@ void Album::DrawFilterPanel() {
         }
 
         bool sel = (i == mOverlaySel);
-        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : Gfx::COLOR_SIDEBAR_SEL;
-        SDL_Color tc = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : Gfx::COLOR_TEXT));
+        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : th.sidebarSel;
+        SDL_Color tc = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : th.text));
 
         if (sel || active) {
             Gfx::DrawRectRounded(px + 6, yo, PW - 12, itemH - 4, 6, bg);
@@ -604,7 +629,7 @@ void Album::DrawFilterPanel() {
 
         Gfx::Print(px + 14, yo + itemH / 2 - 2, 24, tc, displayLabel, Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
-        SDL_Color checkColor = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : Gfx::COLOR_TEXT_DIM));
+        SDL_Color checkColor = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : th.textDim));
         Gfx::Print(px + PW - 14, yo + itemH / 2 - 2, 22, checkColor,
                    active ? "[x]" : "[ ]",
                    Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
@@ -634,6 +659,7 @@ void Album::UpdateQuickAccessOverlay(const Input& input) {
 }
 
 void Album::DrawQuickAccessPanel() {
+    const auto& th = Gfx::Theme();
     const int PW = 280;
     int startY = HEADER_H + 40;
     int spacing = 80;
@@ -648,7 +674,7 @@ void Album::DrawQuickAccessPanel() {
     int px = SIDEBAR_W + 4;
 
     Gfx::DrawRectFilled(px + 3, py + 3, PW, ph, {0, 0, 0, 80});
-    Gfx::DrawRectRounded(px, py, PW, ph, 8, {0xf0, 0xf0, 0xf0, 0xff});
+    Gfx::DrawRectRounded(px, py, PW, ph, 8, th.panelBg);
     Gfx::DrawRectRoundedOutline(px, py, PW, ph, 8, Gfx::COLOR_ACCENT, 2);
 
     int yo = py + 10;
@@ -659,8 +685,8 @@ void Album::DrawQuickAccessPanel() {
         else label = "Delete";
 
         bool sel = (i == mOverlaySel);
-        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : Gfx::COLOR_SIDEBAR_SEL;
-        SDL_Color tc = sel ? Gfx::COLOR_WHITE : Gfx::COLOR_TEXT;
+        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : th.sidebarSel;
+        SDL_Color tc = sel ? Gfx::COLOR_WHITE : th.text;
 
         if (sel) {
             Gfx::DrawRectRounded(px + 6, yo, PW - 12, itemH - 4, 6, bg);
@@ -672,6 +698,7 @@ void Album::DrawQuickAccessPanel() {
 }
 
 void Album::DrawSortPanel() {
+    const auto& th = Gfx::Theme();
     const int PW = 280;
     int startY = HEADER_H + 40;
     int spacing = 80;
@@ -686,7 +713,7 @@ void Album::DrawSortPanel() {
     int px = SIDEBAR_W + 4;
 
     Gfx::DrawRectFilled(px + 3, py + 3, PW, ph, {0, 0, 0, 80});
-    Gfx::DrawRectRounded(px, py, PW, ph, 8, {0xf0, 0xf0, 0xf0, 0xff});
+    Gfx::DrawRectRounded(px, py, PW, ph, 8, th.panelBg);
     Gfx::DrawRectRoundedOutline(px, py, PW, ph, 8, Gfx::COLOR_ACCENT, 2);
 
     int yo = py + 10;
@@ -695,8 +722,8 @@ void Album::DrawSortPanel() {
         bool active = ((int)mSort == i);
 
         bool sel = (i == mOverlaySel);
-        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : Gfx::COLOR_SIDEBAR_SEL;
-        SDL_Color tc = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : Gfx::COLOR_TEXT));
+        SDL_Color bg = sel ? Gfx::COLOR_ACCENT : th.sidebarSel;
+        SDL_Color tc = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : th.text));
 
         if (sel || active) {
             Gfx::DrawRectRounded(px + 6, yo, PW - 12, itemH - 4, 6, bg);
@@ -704,7 +731,7 @@ void Album::DrawSortPanel() {
 
         Gfx::Print(px + 14, yo + itemH / 2 - 2, 24, tc, label, Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
-        SDL_Color checkColor = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : Gfx::COLOR_TEXT_DIM));
+        SDL_Color checkColor = (sel && active) ? Gfx::COLOR_WHITE : (active ? Gfx::COLOR_ACCENT : (sel ? Gfx::COLOR_WHITE : th.textDim));
         Gfx::Print(px + PW - 14, yo + itemH / 2 - 2, 22, checkColor,
                    active ? "[x]" : "[ ]",
                    Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);

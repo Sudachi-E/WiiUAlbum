@@ -646,7 +646,7 @@ void Album::DrawTextOverlay() {
     else if (mTextOverlayFocus == 1) hint = Glyphs::A + " Change position  " + Glyphs::DPAD_UP_DOWN + " Navigate  " + Glyphs::B + " Back";
     else if (mTextOverlayFocus == 2) hint = Glyphs::DPAD_LEFT_RIGHT + " Pick color  " + Glyphs::DPAD_UP_DOWN + " Navigate  " + Glyphs::X + " Advanced  " + Glyphs::B + " Back";
     else if (mTextOverlayFocus == 3) hint = Glyphs::A + " Save  " + Glyphs::DPAD_UP + " Navigate  " + Glyphs::B + " Back";
-    Gfx::Print(rightX + rightW / 2, h - 18, 16, Gfx::COLOR_WHITE, hint, Gfx::ALIGN_CENTER);
+    Gfx::Print(rightX + rightW / 2, h - 18, 25, Gfx::COLOR_WHITE, hint, Gfx::ALIGN_CENTER);
 
     if (mPointerDraw) {
         Gfx::DrawCircleFilled(mPointerScreenX, mPointerScreenY, 10, Gfx::COLOR_WHITE);

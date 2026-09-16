@@ -177,19 +177,22 @@ void Album::UpdateQRTransfer(const Input& input) {
 }
 
 void Album::DrawQRTransfer() {
-    Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, Gfx::SCREEN_HEIGHT, {0xff, 0xff, 0xff, 0xff});
+    const auto& th = Gfx::Theme();
+
+    // Full-screen background
+    Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, Gfx::SCREEN_HEIGHT, th.bg);
 
     int cx = Gfx::SCREEN_WIDTH / 2;
     int cy = Gfx::SCREEN_HEIGHT / 2;
 
-    Gfx::Print(cx, 60, 36, Gfx::COLOR_TEXT, "Transfer to Device", Gfx::ALIGN_CENTER);
-    Gfx::Print(cx, 110, 24, Gfx::COLOR_TEXT_DIM, mQRFileName, Gfx::ALIGN_CENTER);
+    Gfx::Print(cx, 60, 36, th.text, "Transfer to Device", Gfx::ALIGN_CENTER);
+    Gfx::Print(cx, 110, 24, th.textDim, mQRFileName, Gfx::ALIGN_CENTER);
 
     if (mQRState == QRState::Error) {
         Gfx::Print(cx, cy, 36, Gfx::COLOR_DELETE,
                    "Error starting transfer.\nCheck network connection.",
                    Gfx::ALIGN_CENTER);
-        Gfx::Print(cx, cy + 120, 26, Gfx::COLOR_TEXT_DIM,
+        Gfx::Print(cx, cy + 120, 26, th.textDim,
                    "B: Back", Gfx::ALIGN_CENTER);
         return;
     }
@@ -200,9 +203,11 @@ void Album::DrawQRTransfer() {
         int qrX = cx - qrPx / 2;
         int qrY = cy - qrPy / 2 - 40;
 
-        int shadowOff = 6;
-        Gfx::DrawRectFilled(qrX + shadowOff, qrY + shadowOff, qrPx, qrPy, {0, 0, 0, 30});
-        Gfx::DrawRectRounded(qrX - 8, qrY - 8, qrPx + 16, qrPy + 16, 8, {0xf5, 0xf5, 0xf5, 0xff});
+        // Drop shadow
+        Gfx::DrawRectFilled(qrX + 6, qrY + 6, qrPx, qrPy, {0, 0, 0, 30});
+
+        // QR card — always white so the QR code itself stays scannable in both modes
+        Gfx::DrawRectRounded(qrX - 8, qrY - 8, qrPx + 16, qrPy + 16, 8, {0xff, 0xff, 0xff, 0xff});
         Gfx::DrawRectRoundedOutline(qrX - 8, qrY - 8, qrPx + 16, qrPy + 16, 8, Gfx::COLOR_ACCENT, 2);
 
         Gfx::DrawTexture(mQRCodeTexture, qrX, qrY, qrPx, qrPy);
@@ -222,36 +227,36 @@ void Album::DrawQRTransfer() {
                     Gfx::Print(cx, statusY, 28, Gfx::COLOR_ACCENT,
                                "Connected from: " + clientIP,
                                Gfx::ALIGN_CENTER);
-                    Gfx::Print(cx, statusY + 40, 24, Gfx::COLOR_TEXT_DIM,
+                    Gfx::Print(cx, statusY + 40, 24, th.textDim,
                                "Open the link on your device to download files",
                                Gfx::ALIGN_CENTER);
                 } else {
-                    Gfx::Print(cx, statusY, 28, Gfx::COLOR_TEXT,
+                    Gfx::Print(cx, statusY, 28, th.text,
                                "Scan the QR code with your smart device",
                                Gfx::ALIGN_CENTER);
-                    Gfx::Print(cx, statusY + 40, 24, Gfx::COLOR_TEXT_DIM,
+                    Gfx::Print(cx, statusY + 40, 24, th.textDim,
                                std::to_string(mTransferFilePaths.size()) + " file(s) ready to transfer",
                                Gfx::ALIGN_CENTER);
                 }
             } else if (connected && confirmed) {
-                Gfx::Print(cx, statusY, 28, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, statusY, 28, th.text,
                            "Waiting for device...",
                            Gfx::ALIGN_CENTER);
-                Gfx::Print(cx, statusY + 40, 24, Gfx::COLOR_TEXT_DIM,
+                Gfx::Print(cx, statusY + 40, 24, th.textDim,
                            "The file transfer will begin shortly",
                            Gfx::ALIGN_CENTER);
             } else if (connected) {
                 Gfx::Print(cx, statusY, 28, Gfx::COLOR_ACCENT,
                            "Connected from: " + clientIP,
                            Gfx::ALIGN_CENTER);
-                Gfx::Print(cx, statusY + 40, 28, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, statusY + 40, 28, th.text,
                            "Press A to start transfer",
                            Gfx::ALIGN_CENTER);
             } else {
-                Gfx::Print(cx, statusY, 28, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, statusY, 28, th.text,
                            "Scan the QR code with your smart device",
                            Gfx::ALIGN_CENTER);
-                Gfx::Print(cx, statusY + 40, 24, Gfx::COLOR_TEXT_DIM,
+                Gfx::Print(cx, statusY + 40, 24, th.textDim,
                            "Make sure your device is on the same network",
                            Gfx::ALIGN_CENTER);
             }
@@ -262,20 +267,20 @@ void Album::DrawQRTransfer() {
             int barW = 400, barH = 20;
             int barX = cx - barW / 2;
             int barY = statusY;
-            Gfx::DrawRectRounded(barX, barY, barW, barH, 10, {0xe0, 0xe0, 0xe0, 0xff});
+            Gfx::DrawRectRounded(barX, barY, barW, barH, 10, th.separator);
             Gfx::DrawRectRounded(barX, barY, barW * prog / 100, barH, 10, Gfx::COLOR_ACCENT);
             Gfx::Print(cx, barY + barH / 2, 22, Gfx::COLOR_WHITE,
                        std::to_string(prog) + "%", Gfx::ALIGN_CENTER);
             if (mTransferMode == TransferMode::Multi) {
                 int cur = mFileServer.GetCurrentFileIdx() + 1;
                 int total = mFileServer.GetTotalFiles();
-                Gfx::Print(cx, barY + barH + 20, 22, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, barY + barH + 20, 22, th.text,
                            "File " + std::to_string(cur) + " of " + std::to_string(total),
                            Gfx::ALIGN_CENTER);
-                Gfx::Print(cx, barY + barH + 50, 26, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, barY + barH + 50, 26, th.text,
                            "Transferring...", Gfx::ALIGN_CENTER);
             } else {
-                Gfx::Print(cx, barY + barH + 36, 26, Gfx::COLOR_TEXT,
+                Gfx::Print(cx, barY + barH + 36, 26, th.text,
                            "Transferring...", Gfx::ALIGN_CENTER);
             }
             break;
@@ -287,22 +292,22 @@ void Album::DrawQRTransfer() {
                 int served = mFileServer.GetServedCount();
                 int total = mFileServer.GetTotalFiles();
                 if (served >= total) {
-                    Gfx::Print(cx, statusY + 50, 24, Gfx::COLOR_TEXT_DIM,
+                    Gfx::Print(cx, statusY + 50, 24, th.textDim,
                                "All files transferred!   B: Back", Gfx::ALIGN_CENTER);
                 } else {
-                    Gfx::Print(cx, statusY + 50, 24, Gfx::COLOR_TEXT_DIM,
+                    Gfx::Print(cx, statusY + 50, 24, th.textDim,
                                std::to_string(served) + " of " + std::to_string(total) + " files transferred   B: Back",
                                Gfx::ALIGN_CENTER);
                 }
             } else {
-                Gfx::Print(cx, statusY + 50, 24, Gfx::COLOR_TEXT_DIM,
+                Gfx::Print(cx, statusY + 50, 24, th.textDim,
                            "B: Back", Gfx::ALIGN_CENTER);
             }
             break;
         case QRState::Error:
             Gfx::Print(cx, statusY, 28, Gfx::COLOR_DELETE,
                        "Transfer failed", Gfx::ALIGN_CENTER);
-            Gfx::Print(cx, statusY + 40, 24, Gfx::COLOR_TEXT_DIM,
+            Gfx::Print(cx, statusY + 40, 24, th.textDim,
                        "X: Retry   B: Back", Gfx::ALIGN_CENTER);
             break;
         default: break;
@@ -318,15 +323,15 @@ void Album::DrawQRTransfer() {
                   !mFileServer.IsTransferConfirmed());
     if (showA) {
         Gfx::PrintIcon(350, hintY, IZ, Gfx::COLOR_BTN_A, Glyphs::A, Gfx::ALIGN_CENTER);
-        Gfx::Print(350 + IZ / 2 + IG, hintY, LZ, Gfx::COLOR_TEXT, "Start",
+        Gfx::Print(350 + IZ / 2 + IG, hintY, LZ, th.text, "Start",
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
         int bx = 472;
         Gfx::PrintIcon(bx, hintY, IZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
-        Gfx::Print(bx + IZ / 2 + IG, hintY, LZ, Gfx::COLOR_TEXT, "Cancel",
+        Gfx::Print(bx + IZ / 2 + IG, hintY, LZ, th.text, "Cancel",
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
     } else {
         Gfx::PrintIcon(180, hintY, IZ, Gfx::COLOR_BTN_B, Glyphs::B, Gfx::ALIGN_CENTER);
-        Gfx::Print(180 + IZ / 2 + IG, hintY, LZ, Gfx::COLOR_TEXT, "Back",
+        Gfx::Print(180 + IZ / 2 + IG, hintY, LZ, th.text, "Back",
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
     }
 

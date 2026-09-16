@@ -9,8 +9,8 @@ endif
 TOPDIR ?= $(CURDIR)
 
 #-------------------------------------------------------------------------------
-APP_NAME        := WiiUAlbum
-APP_SHORTNAME   := Album
+APP_NAME        := Wii U Album
+APP_SHORTNAME   := Wii U Album
 APP_AUTHOR      := SudoTronics
 #-------------------------------------------------------------------------------
 

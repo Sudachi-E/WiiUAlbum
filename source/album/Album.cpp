@@ -328,7 +328,8 @@ void Album::SaveConfig() const {
 
     FILE* f = fopen(file.c_str(), "w");
     if (!f) return;
-    fprintf(f, "filter=%d\nsort=%d\nfilter_app=%s\n", (int)mFilter, (int)mSort, mFilterApp.c_str());
+    fprintf(f, "filter=%d\nsort=%d\nfilter_app=%s\ndark_mode=%d\n",
+            (int)mFilter, (int)mSort, mFilterApp.c_str(), mSettingsDarkMode ? 1 : 0);
     fclose(f);
     WHBLogPrintf("[ALBUM] Config saved to %s", file.c_str());
 }
@@ -342,7 +343,7 @@ void Album::LoadConfig() {
         return;
     }
 
-    int filterVal = 0, sortVal = 0;
+    int filterVal = 0, sortVal = 0, darkVal = 0;
     char appBuf[256] = {0};
     fscanf(f, "filter=%d\nsort=%d\n", &filterVal, &sortVal);
     char line[512];
@@ -352,13 +353,19 @@ void Album::LoadConfig() {
             if (len > 0 && appBuf[len-1] == '\r') appBuf[len-1] = '\0';
         }
     }
+    if (fgets(line, sizeof(line), f)) {
+        sscanf(line, "dark_mode=%d", &darkVal);
+    }
     fclose(f);
 
     if (filterVal >= 0 && filterVal <= 2) mFilter = (FilterMode)filterVal;
     if (sortVal   >= 0 && sortVal   <= 1) mSort   = (SortOrder)sortVal;
     if (appBuf[0]) mFilterApp = appBuf;
+    mSettingsDarkMode = (darkVal != 0);
+    Gfx::SetDarkMode(mSettingsDarkMode);
 
-    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d", filterVal, sortVal);
+    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d dark_mode=%d",
+                 filterVal, sortVal, darkVal);
 }
 
 std::string Album::FormatDuration(uint32_t sec) {
@@ -489,6 +496,11 @@ void Album::Update(const Input& input) {
         return;
     }
 
+    if (mSettingsOpen) {
+        UpdateSettings(input);
+        return;
+    }
+
     if (mClipMode) {
         UpdateClipMode(input);
         return;
@@ -523,7 +535,7 @@ void Album::Update(const Input& input) {
                 case 0: OpenOverlay(Overlay::QuickAccess); break;
                 case 1: OpenOverlay(Overlay::Filter);   break;
                 case 2: OpenOverlay(Overlay::Sort);     break;
-                case 3: OpenOverlay(Overlay::Settings); break;
+                case 3: OpenSettings(); break;
             }
         }
         if (input.IsPressed(Input::BUTTON_B)) {
@@ -649,6 +661,11 @@ void Album::Draw() {
         return;
     }
 
+    if (mSettingsOpen) {
+        DrawSettings();
+        return;
+    }
+
     if (mClipMode) {
         DrawClipMode();
         return;
@@ -664,7 +681,7 @@ void Album::Draw() {
         return;
     }
 
-    Gfx::Clear(Gfx::COLOR_BG);
+    Gfx::Clear(Gfx::Theme().bg);
 
     DrawGrid();
     DrawSidebar();

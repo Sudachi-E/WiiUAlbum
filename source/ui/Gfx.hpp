@@ -9,6 +9,7 @@ namespace Gfx {
     constexpr int SCREEN_WIDTH  = 1920;
     constexpr int SCREEN_HEIGHT = 1080;
 
+    // ── Static colour constants (kept for backward-compat, always light values) ──
     constexpr SDL_Color COLOR_BG            = {0xeb, 0xeb, 0xeb, 0xff};
     constexpr SDL_Color COLOR_SIDEBAR_BG    = {0xf5, 0xf5, 0xf5, 0xff};
     constexpr SDL_Color COLOR_HEADER_BG     = {0xff, 0xff, 0xff, 0xff};
@@ -33,6 +34,32 @@ namespace Gfx {
     constexpr SDL_Color COLOR_BTN_Y         = {0xe6, 0xb8, 0x00, 0xff};
     constexpr SDL_Color COLOR_BTN_X         = {0x2e, 0x9a, 0x2e, 0xff};
     constexpr SDL_Color COLOR_DELETE        = {0xde, 0x3b, 0x2e, 0xff};
+
+    // ── Runtime theme ──────────────────────────────────────────────────────────
+    // Semantic colour slots that change between light and dark mode.
+    // Use Gfx::Theme() to obtain the active palette.
+    struct ThemePalette {
+        SDL_Color bg;           // main content background
+        SDL_Color sidebarBg;    // narrow left sidebar
+        SDL_Color headerBg;     // top bar
+        SDL_Color footerBg;     // bottom bar
+        SDL_Color separator;    // divider lines
+        SDL_Color text;         // primary text
+        SDL_Color textDim;      // secondary / muted text
+        SDL_Color textLight;    // lightest label text
+        SDL_Color sidebarSel;   // selected item fill in sidebar/panels
+        SDL_Color accentBg;     // light accent tint (selected row highlight)
+        SDL_Color cardBg;       // overlay dialog / card background
+        SDL_Color panelBg;      // filter/sort popup background
+        SDL_Color thumbPlaceholder; // empty thumbnail fill
+    };
+
+    // Set the active theme (called by Album when the user toggles dark mode).
+    void SetDarkMode(bool dark);
+    bool IsDarkMode();
+
+    // Returns the active ThemePalette.
+    const ThemePalette& Theme();
 
     enum AlignFlags {
         ALIGN_LEFT       = 1 << 0,

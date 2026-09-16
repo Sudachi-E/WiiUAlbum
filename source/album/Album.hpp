@@ -186,7 +186,18 @@ private:
     std::string GetSortStr()  const;
     std::string GetFilterStr() const;
 
-    bool mSettingsDarkMode = false;
+    bool mSettingsDarkMode     = false;
+    bool mSettingsOpen         = false;
+    bool mSettingsCatFocus     = true;
+    int  mSettingsCatSel       = 0;
+    int  mSettingsItemSel      = 0;
+
+    void OpenSettings();
+    void CloseSettings();
+    void UpdateSettings(const Input& input);
+    void DrawSettings();
+    void DrawSettingsCategory(int catX, int catW, int contentY, int catItemH);
+    void DrawSettingsContent(int contentX, int contentW, int contentY);
 
     std::string mScanDiagnostics;
     std::string mPathScreenshots;

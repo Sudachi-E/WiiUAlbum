@@ -630,13 +630,14 @@ void Album::DrawViewer() {
     }
 
     if (mSaveNotifEndTime > 0 && SDL_GetTicks() < mSaveNotifEndTime) {
+        const auto& th = Gfx::Theme();
         int nw = 400, nh = 100;
         int nx = (Gfx::SCREEN_WIDTH - nw) / 2;
         int ny = (Gfx::SCREEN_HEIGHT - nh) / 2;
         Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, Gfx::SCREEN_HEIGHT, {0, 0, 0, 100});
-        Gfx::DrawRectRounded(nx, ny, nw, nh, 12, {0xff, 0xff, 0xff, 0xff});
+        Gfx::DrawRectRounded(nx, ny, nw, nh, 12, th.cardBg);
         Gfx::DrawRectRoundedOutline(nx, ny, nw, nh, 12, Gfx::COLOR_ACCENT, 2);
-        Gfx::Print(nx + nw / 2, ny + nh / 2, 30, Gfx::COLOR_TEXT, "Screenshot saved!", Gfx::ALIGN_CENTER);
+        Gfx::Print(nx + nw / 2, ny + nh / 2, 30, th.text, "Screenshot saved!", Gfx::ALIGN_CENTER);
     }
 
     // Delete confirmation dialog
