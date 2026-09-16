@@ -177,8 +177,13 @@ void Album::DrawSettings() {
 
     DrawGearIcon(36, HEADER_H / 2, 14, th.text);
 
-    Gfx::Print(64, HEADER_H / 2, 32, th.text, "Settings",
+    Gfx::Print(64, HEADER_H / 2, 32, th.text, "Settings", 
                Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+
+    int titleW = Gfx::GetTextWidth(32, "Settings");
+    Gfx::Print(Gfx::SCREEN_WIDTH - titleW +100, HEADER_H / 2, 32, th.text, 
+                "V2.0", 
+                Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
 
     DrawSettingsCategory(0, CAT_W, HEADER_H, CAT_ITEM_H);
 
