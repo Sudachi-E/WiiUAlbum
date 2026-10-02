@@ -1,5 +1,6 @@
-#include "Album.hpp"
+﻿#include "Album.hpp"
 #include "../ui/Glyphs.hpp"
+#include "../ui/Log.hpp"
 #include <sys/stat.h>
 #include <cstdio>
 #include <ctime>
@@ -364,7 +365,7 @@ void Album::UpdateVideoPlayback() {
     if (mWallClockStartTime == 0 ||
         (currentTime - mWallClockStartTime) / 1000.0 - (videoPTS - mWallClockStartPTS) > 2.0) {
         if (mWallClockStartTime != 0) {
-            WHBLogPrintf("[ALBUM] UpdateVideoPlayback: large time gap detected, re-syncing wall clock");
+            ALBUM_LOG("Video playback: large time gap detected, re-syncing wall clock");
         }
         mWallClockStartTime = currentTime;
         mWallClockStartPTS = videoPTS;
@@ -377,7 +378,7 @@ void Album::UpdateVideoPlayback() {
 
         static Uint32 lastLog = 0;
         if (currentTime - lastLog > 5000) {
-            WHBLogPrintf("[ALBUM] UpdateVideoPlayback: wall-clock vPTS=%.2f exp=%.2f drift=%.2f", videoPTS, expectedVideoPTS, avDrift);
+            ALBUM_LOG("Video playback: wall-clock vPTS=%.2f exp=%.2f drift=%.2f", videoPTS, expectedVideoPTS, avDrift);
             lastLog = currentTime;
         }
 
@@ -402,7 +403,7 @@ void Album::UpdateVideoPlayback() {
         static Uint32 audioStallStart = 0;
         bool audioStalled = false;
 
-        if (audioPTS == prevSyncAudioPTS) {
+if (audioPTS == prevSyncAudioPTS) {
             if (audioStallStart == 0) audioStallStart = currentTime;
             if (currentTime - audioStallStart > 2000 && mVideoDecoder.GetAudioQueueSize() == 0)
                 audioStalled = true;
@@ -411,22 +412,30 @@ void Album::UpdateVideoPlayback() {
         }
         prevSyncAudioPTS = audioPTS;
 
+        if (mVideoDecoder.GetAudioQueueSize() == 0) audioStalled = true;
+
         if (audioStalled) {
             double elapsedWallTime = (currentTime - mWallClockStartTime) / 1000.0;
             double expectedVideoPTS = mWallClockStartPTS + elapsedWallTime;
             avDrift = videoPTS - expectedVideoPTS;
         } else {
-            static Uint32 lastLog = 0;
-            if (currentTime - lastLog > 5000) {
-                WHBLogPrintf("[ALBUM] UpdateVideoPlayback: A-V sync vPTS=%.2f aPTS=%.2f drift=%.2f isAudioPlaying=%d",
-                     videoPTS, audioPTS, avDrift, mVideoDecoder.IsAudioPlaying());
-                lastLog = currentTime;
-            }
+static Uint32 lastLog = 0;
+        if (currentTime - lastLog > 2000) {
+            ALBUM_LOG("Video playback: A-V sync vPTS=%.2f aPTS=%.2f drift=%.2f "
+                      "vDur=%.2f vQueue=%d aQueue=%d audioPlaying=%d",
+                      videoPTS, audioPTS, avDrift,
+                      mVideoDecoder.GetDuration(),
+                      mVideoDecoder.GetVideoQueueSize(),
+                      mVideoDecoder.GetAudioQueueSize(),
+                      mVideoDecoder.IsAudioPlaying());
+            lastLog = currentTime;
+        }
         }
 
+double frameDur = mFrameDelay / 1000.0;
         if (avDrift < -0.1) {
             if (avDrift < -2.0) {
-                WHBLogPrintf("[ALBUM] UpdateVideoPlayback: large A-V gap (%.1fs), re-syncing via seek", -avDrift);
+                ALBUM_LOG("Video playback: large A-V gap (%.1fs), re-syncing via seek", -avDrift);
                 mVideoDecoder.Seek(audioPTS);
                 mWallClockStartTime = currentTime;
                 mWallClockStartPTS = audioPTS;
@@ -441,14 +450,16 @@ void Album::UpdateVideoPlayback() {
                 }
             }
             mVideoDecoder.ReadFrame(mVideoTexture);
-        } else if (avDrift < mFrameDelay / 1000.0) {
+        } else if (avDrift < frameDur) {
+            mVideoDecoder.ReadFrame(mVideoTexture);
+        } else if (avDrift > frameDur * 4) {
             mVideoDecoder.ReadFrame(mVideoTexture);
         }
     }
 
     if (mVideoDecoder.GetCurrentTime() >= mVideoDecoder.GetDuration() - 0.1) {
         if (mVideoDecoder.GetDuration() > 0) {
-            WHBLogPrintf("[ALBUM] UpdateVideoPlayback: reached end of video, looping");
+            ALBUM_LOG("Video playback: reached end of video, looping");
             mVideoDecoder.Seek(0.0);
             mWallClockStartTime = SDL_GetTicks();
             mWallClockStartPTS = mVideoDecoder.GetCurrentTime();

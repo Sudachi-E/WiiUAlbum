@@ -2,12 +2,13 @@
 #include "../ui/Glyphs.hpp"
 #include <whb/log.h>
 
-static const char* kCategories[] = { "Display" };
-static constexpr int NUM_CATEGORIES = 1;
+static const char* kCategories[] = { "Display", "Camera" };
+static constexpr int NUM_CATEGORIES = 2;
 
 static int GetItemCount(int cat) {
     switch (cat) {
         case 0: return 1;
+        case 1: return 5;
         default: return 0;
     }
 }
@@ -66,6 +67,15 @@ void Album::UpdateSettings(const Input& input) {
                 SaveConfig();
                 WHBLogPrintf("[SETTINGS] Dark mode: %s",
                              mSettingsDarkMode ? "on" : "off");
+            } else if (mSettingsCatSel == 1) {
+                switch (mSettingsItemSel) {
+                    case 0: mSettingsCamMirror = !mSettingsCamMirror; break;
+                    case 1: mSettingsCamFps    = (mSettingsCamFps >= 30) ? 15 : 30; break;
+                    case 2: mSettingsCamGrid   = !mSettingsCamGrid; break;
+                    case 3: mSettingsCamSource = mSettingsCamSource ? 0 : 1; break;
+                    default: break;
+                }
+                SaveConfig();
             }
         }
     }
@@ -133,37 +143,77 @@ void Album::DrawSettingsContent(int contentX, int contentW, int contentY) {
     constexpr int ITEM_H    = 80;
     constexpr int ITEM_PAD  = 14;
 
-    if (mSettingsCatSel == 0) {
-        {
-            int iy  = contentY;
-            bool sel = (!mSettingsCatFocus && mSettingsItemSel == 0);
-
-            if (sel) {
-                Gfx::DrawRectRounded(contentX - 4, iy + 4,
-                                     contentW + 8, ITEM_H - 8, 8, th.accentBg);
-                Gfx::DrawRectRoundedOutline(contentX - 4, iy + 4,
-                                            contentW + 8, ITEM_H - 8, 8,
-                                            Gfx::COLOR_ACCENT, 3);
-            } else {
-                Gfx::DrawRectFilled(contentX, iy + ITEM_H - 1,
-                                    contentW, 1, th.separator);
-            }
-
-            Gfx::Print(contentX + ITEM_PAD,
-                       iy + ITEM_H / 2, 28, th.text, "Dark Mode",
-                       Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
-
-            SDL_Color valColor = mSettingsDarkMode ? Gfx::COLOR_ACCENT : th.textDim;
-            std::string valLabel = mSettingsDarkMode ? "On" : "Off";
-            int toggleCX = contentX + contentW - ITEM_PAD - 80;
-            Gfx::Print(toggleCX - 14,
-                       iy + ITEM_H / 2, 28, valColor, valLabel,
-                       Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
-
-            DrawToggle(contentX + contentW - ITEM_PAD - 36,
-                       iy + ITEM_H / 2, mSettingsDarkMode);
-
+    auto drawRow = [&](int iy, bool sel) {
+        if (sel) {
+            Gfx::DrawRectRounded(contentX - 4, iy + 4,
+                                 contentW + 8, ITEM_H - 8, 8, th.accentBg);
+            Gfx::DrawRectRoundedOutline(contentX - 4, iy + 4,
+                                        contentW + 8, ITEM_H - 8, 8,
+                                        Gfx::COLOR_ACCENT, 3);
+        } else {
+            Gfx::DrawRectFilled(contentX, iy + ITEM_H - 1,
+                                contentW, 1, th.separator);
         }
+    };
+
+    if (mSettingsCatSel == 0) {
+        int iy  = contentY;
+        bool sel = (!mSettingsCatFocus && mSettingsItemSel == 0);
+
+        drawRow(iy, sel);
+
+        Gfx::Print(contentX + ITEM_PAD,
+                   iy + ITEM_H / 2, 28, th.text, "Dark Mode",
+                   Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+
+        SDL_Color valColor = mSettingsDarkMode ? Gfx::COLOR_ACCENT : th.textDim;
+        std::string valLabel = mSettingsDarkMode ? "On" : "Off";
+        int toggleCX = contentX + contentW - ITEM_PAD - 80;
+        Gfx::Print(toggleCX - 14,
+                   iy + ITEM_H / 2, 28, valColor, valLabel,
+                   Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
+
+        DrawToggle(contentX + contentW - ITEM_PAD - 36,
+                   iy + ITEM_H / 2, mSettingsDarkMode);
+
+    } else if (mSettingsCatSel == 1) {
+        struct Row { const char* label; std::string value; bool isToggle; bool on; };
+        Row rows[4] = {
+            {"Mirror Preview",   mSettingsCamMirror ? "On" : "Off",
+             true,  mSettingsCamMirror},
+            {"Frame Rate",       std::to_string(mSettingsCamFps) + " fps",
+             false, true},
+            {"Grid Guides",      mSettingsCamGrid ? "On" : "Off",
+             true,  mSettingsCamGrid},
+            {"Camera Source",    mSettingsCamSource ? "USB / DLC" : "GamePad",
+             false, true},
+        };
+
+        for (int i = 0; i < 4; i++) {
+            int iy  = contentY + i * ITEM_H;
+            bool sel = (!mSettingsCatFocus && mSettingsItemSel == i);
+
+            drawRow(iy, sel);
+
+            Gfx::Print(contentX + ITEM_PAD, iy + ITEM_H / 2, 28, th.text,
+                       rows[i].label, Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
+
+            SDL_Color valColor = rows[i].on ? Gfx::COLOR_ACCENT : th.textDim;
+            int valX = contentX + contentW - ITEM_PAD - 36;
+            if (rows[i].isToggle) {
+                DrawToggle(valX, iy + ITEM_H / 2, rows[i].on);
+            } else {
+                Gfx::Print(valX, iy + ITEM_H / 2, 28, valColor, rows[i].value,
+                           Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
+            }
+        }
+
+        Gfx::Print(contentX, contentY + 4 * ITEM_H + 16, 22, th.textDim,
+                   "These are the defaults the camera starts with; they can also",
+                   Gfx::ALIGN_LEFT);
+        Gfx::Print(contentX, contentY + 4 * ITEM_H + 46, 22, th.textDim,
+                   "be changed while the camera is open.",
+                   Gfx::ALIGN_LEFT);
     }
 }
 

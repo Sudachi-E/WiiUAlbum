@@ -316,12 +316,10 @@ void Album::DrawSidebarItem(int idx, int x, int y, int size,
             break;
         }
         case 4:
-            Gfx::DrawRectRoundedOutline(ix, iy, iw, ih, 3, iconColor, 2);
-            Gfx::DrawRectFilled(ix + 3, iy + 3, 6, 6, iconColor);
-            Gfx::DrawRectFilled(ix + 3, iy + ih - 9, 6, 6, iconColor);
-            Gfx::DrawRectFilled(ix + iw - 9, iy + 3, 6, 6, iconColor);
-            Gfx::DrawRectFilled(ix + iw - 9, iy + ih - 9, 6, 6, iconColor);
-            Gfx::DrawRectFilled(ix + iw/2-2, iy + iw/2-2, 6, 6, iconColor);
+            // Camera body with a lens and viewfinder bump.
+            Gfx::DrawRectRounded(ix, iy + 3, iw, ih - 3, 4, iconColor);
+            Gfx::DrawRectFilled(ix + 6, iy, 9, 4, iconColor);
+            Gfx::DrawCircleFilled(cx, cy + 2, 5, th.sidebarBg);
             break;
     }
 }
@@ -335,9 +333,9 @@ void Album::DrawSidebar() {
     int spacing  = 80;
     int startY   = HEADER_H + 40;
 
-    static const char* labels[] = { "Quick Actions", "Filter", "Sort", "Settings" };
+    static const char* labels[] = { "Quick Actions", "Filter", "Sort", "Settings", "Camera" };
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 5; i++) {
         int ix = (SIDEBAR_W - iconSize) / 2;
         int iy = startY + i * spacing;
         bool selected = mSidebarFocus && (mSidebarSel == i) && mOverlay == Overlay::None;
@@ -638,7 +636,7 @@ void Album::DrawFilterPanel() {
 }
 
 void Album::UpdateQuickAccessOverlay(const Input& input) {
-    int numOpts = 3;
+    int numOpts = 4;
     if (input.IsPressed(Input::BUTTON_DOWN))  mOverlaySel = (mOverlaySel + 1) % numOpts;
     if (input.IsPressed(Input::BUTTON_UP))    mOverlaySel = (mOverlaySel + numOpts - 1) % numOpts;
     if (input.IsPressed(Input::BUTTON_A) && !mPointerConsumedClick) {
@@ -653,6 +651,9 @@ void Album::UpdateQuickAccessOverlay(const Input& input) {
         } else if (mOverlaySel == 2) {
             CloseOverlay();
             if (!mFiltered.empty()) EnterMultiSelect();
+        } else {
+            CloseOverlay();
+            EnterCameraMode();
         }
     }
     if (input.IsPressed(Input::BUTTON_B) || input.IsPressed(Input::BUTTON_LEFT)) CloseOverlay();
@@ -665,7 +666,7 @@ void Album::DrawQuickAccessPanel() {
     int spacing = 80;
     int py = startY + 0 * spacing;
     int itemH = 42;
-    int numItems = 3;
+    int numItems = 4;
     int ph = 20 + numItems * itemH + 16;
     if (py + ph > Gfx::SCREEN_HEIGHT - 10)
         py = Gfx::SCREEN_HEIGHT - 10 - ph;
@@ -682,7 +683,8 @@ void Album::DrawQuickAccessPanel() {
         std::string label;
         if (i == 0) label = "Refresh";
         else if (i == 1) label = "Transfer to Device";
-        else label = "Delete";
+        else if (i == 2) label = "Delete";
+        else label = "Camera";
 
         bool sel = (i == mOverlaySel);
         SDL_Color bg = sel ? Gfx::COLOR_ACCENT : th.sidebarSel;

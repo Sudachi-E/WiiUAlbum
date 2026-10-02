@@ -67,6 +67,8 @@ int main(int argc, char const* argv[]) {
         while (WHBProcIsRunning()) {
             SDL_PumpEvents();
 
+            Uint32 t0 = SDL_GetTicks();
+
             Keyboard::Update();
 
             input.Update();
@@ -74,8 +76,15 @@ int main(int argc, char const* argv[]) {
 
             if (!WHBProcIsRunning()) break;
 
+            Uint32 t1 = SDL_GetTicks();
+
             album.Draw();
+
+            Uint32 t2 = SDL_GetTicks();
+
             Gfx::Render();
+
+            album.RecordCameraPhases(t1 - t0, t2 - t1, SDL_GetTicks() - t2);
         }
 
         LOG("Main loop exited — shutting down");

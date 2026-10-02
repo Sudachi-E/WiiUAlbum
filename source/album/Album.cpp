@@ -1,4 +1,6 @@
 #include "Album.hpp"
+#include "../camera/CameraCapture.hpp"
+#include "../ui/Log.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <algorithm>
@@ -127,6 +129,10 @@ Album::Album(const char* sdRoot) {
 
 Album::~Album() {
     StopQRTransfer();
+    if (mCameraActive) {
+        Camera::Close();
+        mCameraActive = false;
+    }
     if (mClipThread.joinable()) mClipThread.join();
     StopThumbWorkers();
     for (auto& item : mAllItems) {
@@ -134,6 +140,9 @@ Album::~Album() {
         if (item.pendingSurface) SDL_FreeSurface(item.pendingSurface);
     }
     if (mViewerTex) Gfx::DestroyTexture(mViewerTex);
+    if (mCameraTexture) Gfx::DestroyTexture(mCameraTexture);
+    for (auto* tex : mCamThumbs) Gfx::DestroyTexture(tex);
+    mCamThumbs.clear();
 }
 
 void Album::StopThumbWorkers() {
@@ -330,6 +339,9 @@ void Album::SaveConfig() const {
     if (!f) return;
     fprintf(f, "filter=%d\nsort=%d\nfilter_app=%s\ndark_mode=%d\n",
             (int)mFilter, (int)mSort, mFilterApp.c_str(), mSettingsDarkMode ? 1 : 0);
+    fprintf(f, "cam_mirror=%d\ncam_fps=%d\ncam_grid=%d\ncam_source=%d\n",
+            mSettingsCamMirror ? 1 : 0, mSettingsCamFps, mSettingsCamGrid ? 1 : 0,
+            mSettingsCamSource);
     fclose(f);
     WHBLogPrintf("[ALBUM] Config saved to %s", file.c_str());
 }
@@ -344,6 +356,7 @@ void Album::LoadConfig() {
     }
 
     int filterVal = 0, sortVal = 0, darkVal = 0;
+    int camMirrorVal = 0, camFpsVal = 30, camGridVal = 1, camSourceVal = 0;
     char appBuf[256] = {0};
     fscanf(f, "filter=%d\nsort=%d\n", &filterVal, &sortVal);
     char line[512];
@@ -356,16 +369,33 @@ void Album::LoadConfig() {
     if (fgets(line, sizeof(line), f)) {
         sscanf(line, "dark_mode=%d", &darkVal);
     }
+    if (fgets(line, sizeof(line), f)) {
+        sscanf(line, "cam_mirror=%d", &camMirrorVal);
+    }
+    if (fgets(line, sizeof(line), f)) {
+        sscanf(line, "cam_fps=%d", &camFpsVal);
+    }
+    if (fgets(line, sizeof(line), f)) {
+        sscanf(line, "cam_grid=%d", &camGridVal);
+    }
+    if (fgets(line, sizeof(line), f)) {
+        sscanf(line, "cam_source=%d", &camSourceVal);
+    }
     fclose(f);
 
     if (filterVal >= 0 && filterVal <= 2) mFilter = (FilterMode)filterVal;
     if (sortVal   >= 0 && sortVal   <= 1) mSort   = (SortOrder)sortVal;
     if (appBuf[0]) mFilterApp = appBuf;
-    mSettingsDarkMode = (darkVal != 0);
+    mSettingsDarkMode  = (darkVal != 0);
+    mSettingsCamMirror = (camMirrorVal != 0);
+    mSettingsCamFps    = (camFpsVal == 15) ? 15 : 30;
+    mSettingsCamGrid   = (camGridVal != 0);
+    mSettingsCamSource = (camSourceVal == 1) ? 1 : 0;
     Gfx::SetDarkMode(mSettingsDarkMode);
 
-    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d dark_mode=%d",
-                 filterVal, sortVal, darkVal);
+    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d dark_mode=%d cam=%d/%dfps/grid%d/src%d",
+                 filterVal, sortVal, darkVal, camMirrorVal, mSettingsCamFps,
+                 mSettingsCamGrid ? 1 : 0, mSettingsCamSource);
 }
 
 std::string Album::FormatDuration(uint32_t sec) {
@@ -457,6 +487,11 @@ bool Album::OpenVideoItem(int filteredIdx, bool startAudio) {
         WHBLogPrintf("[ALBUM] OpenVideoItem: starting audio playback (hasAudio=%d)", mVideoDecoder.HasAudio());
         mVideoDecoder.StartAudio();
     }
+
+    ALBUM_LOG("Video open: %s duration=%.2fs %dx%d @%.2ffps audio=%d",
+              mAllItems[idx].filename.c_str(), mVideoDecoder.GetDuration(),
+              mVideoDecoder.GetWidth(), mVideoDecoder.GetHeight(),
+              mVideoDecoder.GetFrameRate(), (int)mVideoDecoder.HasAudio());
     return true;
 }
 
@@ -486,6 +521,14 @@ void Album::Update(const Input& input) {
     FlushPendingSurfaces();
 
     mPointerConsumedClick = false;
+
+    if (mCameraActive) {
+        HandleTouch(input);
+        UpdatePointerPosition(input);
+        HandlePointer(input);
+        UpdateCamera(input);
+        return;
+    }
 
     HandleTouch(input);
     UpdatePointerPosition(input);
@@ -524,7 +567,7 @@ void Album::Update(const Input& input) {
     CheckAutoRefresh();
 
     if (mSidebarFocus) {
-        int numItems = 4;
+        int numItems = 5;
         if (input.IsPressed(Input::BUTTON_DOWN))  mSidebarSel = (mSidebarSel + 1) % numItems;
         if (input.IsPressed(Input::BUTTON_UP))    mSidebarSel = (mSidebarSel + numItems - 1) % numItems;
         if (input.IsPressed(Input::BUTTON_RIGHT)) {
@@ -536,6 +579,7 @@ void Album::Update(const Input& input) {
                 case 1: OpenOverlay(Overlay::Filter);   break;
                 case 2: OpenOverlay(Overlay::Sort);     break;
                 case 3: OpenSettings(); break;
+                case 4: EnterCameraMode(); break;
             }
         }
         if (input.IsPressed(Input::BUTTON_B)) {
@@ -656,6 +700,11 @@ void Album::Update(const Input& input) {
 }
 
 void Album::Draw() {
+    if (mCameraActive) {
+        DrawCamera();
+        return;
+    }
+
     if (mQRState != QRState::Inactive) {
         DrawQRTransfer();
         return;
@@ -727,7 +776,7 @@ int Album::TouchHitTestSidebar(int tx, int ty) const {
     int spacing  = 80;
     int startY   = HEADER_H + 40;
     int ix       = (SIDEBAR_W - iconSize) / 2;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 5; i++) {
         int iy = startY + i * spacing;
         if (TouchHitRect(tx, ty, ix - 10, iy - 10, iconSize + 20, iconSize + 20))
             return i;
@@ -775,6 +824,7 @@ void Album::OpenSidebarOverlay(int idx) {
         case 1: OpenOverlay(Overlay::Filter);     break;
         case 2: OpenOverlay(Overlay::Sort);       break;
         case 3: OpenOverlay(Overlay::Settings);   break;
+        case 4: EnterCameraMode();                break;
     }
 }
 
@@ -1040,7 +1090,7 @@ bool Album::HandleOverlayClick(int px, int py) {
     int spacing = 80;
     int slot, numItems, itemH;
     switch (mOverlay) {
-        case Overlay::QuickAccess: slot = 0; numItems = 3; itemH = 42; break;
+        case Overlay::QuickAccess: slot = 0; numItems = 4; itemH = 42; break;
         case Overlay::Filter:      slot = 1; numItems = 3 + 1 + (int)mAppNames.size(); itemH = 42; break;
         case Overlay::Sort:        slot = 2; numItems = 2; itemH = 42; break;
         default: return false;
@@ -1098,6 +1148,9 @@ bool Album::HandleOverlayClick(int px, int py) {
                     } else if (i == 2) {
                         CloseOverlay();
                         if (!mFiltered.empty()) EnterMultiSelect();
+                    } else {
+                        CloseOverlay();
+                        EnterCameraMode();
                     }
                 }
             }
@@ -1170,6 +1223,11 @@ void Album::HandleTouch(const Input& input) {
 
     int tx = input.GetTouchX();
     int ty = input.GetTouchY();
+
+    if (mCameraActive) {
+        if (input.IsTouchJustPressed()) HandleCameraTouch(tx, ty);
+        return;
+    }
 
     if (mQRState != QRState::Inactive) {
         if (input.IsTouchJustPressed()) HandleQRTransferClick(tx, ty);
@@ -1318,6 +1376,11 @@ void Album::HandlePointer(const Input& input) {
 
     int px = mPointerScreenX;
     int py = mPointerScreenY;
+
+    if (mCameraActive) {
+        if (aClick) mPointerConsumedClick = HandleCameraTouch(px, py);
+        return;
+    }
 
     if (mQRState != QRState::Inactive) {
         mPointerConsumedClick = true;

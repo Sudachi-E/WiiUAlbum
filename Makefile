@@ -18,7 +18,7 @@ include $(DEVKITPRO)/wut/share/wut_rules
 
 TARGET          := WiiUAlbum
 BUILD           := build
-SOURCES         := source source/video source/album source/qr source/network source/ui
+SOURCES         := source source/video source/album source/camera source/audio source/qr source/network source/ui
 DATA            := data
 INCLUDES        := source include
 

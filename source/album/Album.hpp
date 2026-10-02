@@ -6,6 +6,8 @@
 #include "../video/ClipEncoder.hpp"
 #include "../qr/QRCode.hpp"
 #include "../network/FileServer.hpp"
+#include "../video/VideoRecorder.hpp"
+#include "../audio/MicCapture.hpp"
 #include <string>
 #include <vector>
 #include <thread>
@@ -45,6 +47,7 @@ public:
     void Update(const Input& input);
     void Draw();
     void StopThumbWorkers();
+    void RecordCameraPhases(Uint32 updateMs, Uint32 drawMs, Uint32 renderMs);
 
 private:
     std::vector<MediaItem> mAllItems;
@@ -275,6 +278,93 @@ private:
     time_t       mLastDirMtimeScreenshots = 0;
     time_t       mLastDirMtimeVideos     = 0;
     void         CheckAutoRefresh();
+
+    static constexpr int CAM_THUMB_W    = 152;
+    static constexpr int CAM_THUMB_H    = 114;
+    static constexpr int CAM_THUMB_GAP  = 14;
+    static constexpr int CAM_THUMB_COLS = 4;
+    static constexpr int CAM_MAX_THUMBS = 12;
+    static constexpr int CAM_HEADER_H   = 72;
+    static constexpr int CAM_FOOTER_H   = 84;
+    static constexpr int CAM_MARGIN     = 30;
+
+    bool         mCameraActive     = false;
+    bool         mCamDiagOverlay  = false;
+    SDL_Texture* mCameraTexture    = nullptr;
+    uint32_t     mCamUploadErrors = 0;
+    std::string  mCamUploadLastError;
+    bool         mCameraHasFrame   = false;
+    bool         mCameraMirror     = false;
+    bool         mCameraGrid       = false;
+    int          mCameraFps        = 30;
+    int          mCameraInstance   = 0;
+
+    Uint32       mCamSessionStart  = 0;
+    Uint32       mCamFlashStart    = 0;
+    Uint32       mCamFlashEnd      = 0;
+    Uint32       mCamNotifEnd      = 0;
+    Uint32       mCamDiagLastTime = 0;
+    Uint32       mCamFrameStart   = 0;
+    float       mCamFrameMsAvg  = 0.f;
+    float       mCamDrawMsAvg   = 0.f;
+    Uint32      mCamFrameMsMax  = 0, mCamDrawMsMax = 0;
+    Uint32      mCamFrameSamples = 0, mCamDrawSamples = 0;
+    float       mCamUpdateMsAvg = 0.f, mCamRenderMsAvg = 0.f;
+    Uint32      mCamUpdateMsMax = 0, mCamRenderMsMax = 0;
+    Uint32      mCamPhaseSamples = 0;
+    bool         mCamNotifError    = false;
+    std::string  mCamNotifText;
+    int          mCamShotsTaken    = 0;
+    std::vector<SDL_Texture*> mCamThumbs;
+    std::vector<std::string>  mCamThumbNames;
+
+    void EnterCameraMode();
+    void ExitCameraMode();
+    void UpdateCamera(const Input& input);
+    void UploadCameraFrame(SDL_Surface* frame);
+    void DrawCameraFooter();
+    void TriggerCameraHint(int index);
+    void DrawCamera();
+    void DrawCameraPreview(int px, int py, int pw, int ph);
+    void DrawCameraSidePanel(int px, int py, int pw, int ph);
+    void DrawCameraDiagnostics();
+    void DrawCameraSpinner(int cx, int cy, int radius, SDL_Color color, Uint32 time);
+    void CaptureCameraPhoto();
+    void ToggleCameraRecording();
+    void StopCameraRecording(bool notify = true);
+    void ClearCameraThumbs();
+    void ApplyCameraSettings();
+    void WriteCameraDiagnostics(const char* tag);
+    void RecordCameraFrameTiming(Uint32 frameMs, Uint32 drawMs);
+    bool HandleCameraTouch(int px, int py);
+    bool CameraRunning() const;
+    std::string CameraNextFileName() const;
+
+    static constexpr int CAM_HINT_SHUTTER = 0;
+    static constexpr int CAM_HINT_FLIP    = 1;
+    static constexpr int CAM_HINT_GRID    = 2;
+    static constexpr int CAM_HINT_FPS     = 3;
+    static constexpr int CAM_HINT_BACK    = 4;
+    static constexpr int CAM_HINT_DIAG    = 5;
+    static constexpr int CAM_HINT_REC    = 6;
+    static constexpr int CAM_HINT_COUNT   = 7;
+    int  mCamHintRect[CAM_HINT_COUNT][4] = {};
+
+    VideoRecorder mRecorder;
+    MicCapture    mMic;
+    bool          mCamRecording      = false;
+    bool          mMicReady          = false;
+    std::string   mMicError;
+    Uint32        mCamRecordStart    = 0;
+    std::string   mCamRecordPath;
+    Uint32        mCamRecordNotifEnd = 0;
+    bool          mCamRecordNotifErr = false;
+    std::string   mCamRecordNotifText;
+
+    bool mSettingsCamMirror = false;
+    bool mSettingsCamGrid   = true;
+    int  mSettingsCamFps    = 30;
+    int  mSettingsCamSource = 0;   // 0 = GamePad camera, 1 = USB camera
 
     void HandleTouch(const Input& input);
     int  TouchHitTestGrid(int tx, int ty) const;
