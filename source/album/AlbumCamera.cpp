@@ -1124,7 +1124,7 @@ void Album::DrawCameraSidePanel(int px, int py, int pw, int ph) {
         {"Resolution", std::to_string(Camera::WIDTH) + " x " + std::to_string(Camera::HEIGHT)},
         {"Frame rate",  std::to_string(mCameraFps) + " fps" +
                         (measured > 1.0f ? "  (" + std::to_string((int)(measured + 0.5f)) + " seen)" : "")},
-        {"Source",      mCameraInstance ? "USB / DLC camera" : "GamePad camera"},
+        {"Source",      mCameraInstance ? "USB camera" : "GamePad camera"},
         {"View",        mCameraMirror ? "Mirrored" : "Standard"},
     };
 

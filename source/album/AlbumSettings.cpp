@@ -197,7 +197,7 @@ void Album::DrawSettingsContent(int contentX, int contentW, int contentY) {
              false, true},
             {"Grid Guides",      mSettingsCamGrid ? "On" : "Off",
              true,  mSettingsCamGrid},
-            {"Camera Source",    mSettingsCamSource ? "USB / DLC" : "GamePad",
+            {"Camera Source",    mSettingsCamSource ? "USB camera" : "GamePad camera",
              false, true},
             {"Low Light Boost",  mCamBrightenOn ? "On" : "Off",
              true,  mCamBrightenOn},
@@ -248,7 +248,7 @@ void Album::DrawSettings() {
 
     int titleW = Gfx::GetTextWidth(32, "Settings");
     Gfx::Print(Gfx::SCREEN_WIDTH - titleW +100, HEADER_H / 2, 32, th.text, 
-                "V2.0", 
+                "V3.0", 
                 Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
 
     DrawSettingsCategory(0, CAT_W, HEADER_H, CAT_ITEM_H);

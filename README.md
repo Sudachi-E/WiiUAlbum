@@ -9,6 +9,7 @@ A media gallery for the Nintendo Wii U. Browse, view, edit, and wirelessly trans
 ### Gallery View
 - Finds screenshots and videos stored in : `/fs/vol/external01/wiiu/screenshots` [Screenshot plugin](https://github.com/wiiu-env/ScreenshotWUPS/) / `/fs/vol/external01/wiiu/screencaptures` [ScreenCapture Plugin](https://github.com/Sudachi-E/ScreenCapturePlugin)
 - Filter by media type, application name, sort by date (newest/oldest)
+- Filter entries **All Media**, **Screenshots**, **Videos**, **Photos** and **Recordings**, the last two cover only camera media.
 
 ### Video Clipping
 - Trim videos with visual timeline and preview
@@ -19,6 +20,21 @@ A media gallery for the Nintendo Wii U. Browse, view, edit, and wirelessly trans
 ### QR Code Transfer
 - Scan QR code with any device to transfer media or enter the URL into a browser
 - Supports single and multi-file transfers (up to 5 files)
+
+### Camera
+- Take photos/videos with the built-in camera, and record clips.
+- **Recent media** : navigate the grid with the D-pad, open with `A` or a tap on the gamepad screen. Holds up to 256 items.
+
+## Where camera media are stored
+
+| | Path |
+|---|---|
+| Photos | `/fs/vol/external01/wiiu/screenshots/Camera photos/` |
+| Recordings | `/fs/vol/external01/wiiu/screencaptures/Camera recordings/` |
+
+#### Camera settings
+
+Reachable with `+` when using the camera, or from the main settings screen.
 
 ## Supported Controllers
 
