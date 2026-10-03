@@ -1,4 +1,4 @@
-#include "Album.hpp"
+﻿#include "Album.hpp"
 #include "../ui/Glyphs.hpp"
 #include <algorithm>
 #include <whb/log.h>
@@ -52,7 +52,7 @@ void Album::ExecuteMultiDelete() {
     mGridCursor = 0;
     mScrollRow  = 0;
     mSidebarFocus = true;
-    WHBLogPrintf("[ALBUM] Multi-delete done — %d items remain", (int)mAllItems.size());
+    WHBLogPrintf("[ALBUM] Multi-delete done â€” %d items remain", (int)mAllItems.size());
 }
 
 void Album::UpdateOverlay(const Input& input) {
@@ -71,21 +71,27 @@ void Album::UpdateOverlay(const Input& input) {
 }
 
 void Album::UpdateFilterOverlay(const Input& input) {
-    int total = 3 + 1 + (int)mAppNames.size();
+    int total = FILTER_TYPE_ROWS + 1 + (int)mAppNames.size();
     auto wrapSel = [&](int dir) {
         int n = mOverlaySel;
-        do { n = (n + dir + total) % total; } while (n == 3);
+        do { n = (n + dir + total) % total; } while (n == FILTER_TYPE_ROWS);
         mOverlaySel = n;
     };
-    if (input.IsPressed(Input::BUTTON_DOWN))  wrapSel(1);
-    if (input.IsPressed(Input::BUTTON_UP))    wrapSel(-1);
+    {
+        int dirV = 0;
+        if (input.IsHeld(Input::BUTTON_DOWN)) dirV =  1;
+        if (input.IsHeld(Input::BUTTON_UP))   dirV = -1;
+        const int stepV = mGridRepeatV.Update(dirV, SDL_GetTicks());
+        if (stepV) wrapSel(stepV);
+    }
     if (input.IsPressed(Input::BUTTON_A) && !mPointerConsumedClick) {
-        if (mOverlaySel < 3) {
+        if (mOverlaySel < FILTER_TYPE_ROWS) {
             mFilter = (FilterMode)mOverlaySel;
             mFilterApp.clear();
         } else {
             mFilter = FilterMode::All;
-            mFilterApp = (mOverlaySel >= 4) ? mAppNames[mOverlaySel - 4] : "";
+            mFilterApp = (mOverlaySel >= FILTER_FIRST_APP_ROW)
+                       ? mAppNames[mOverlaySel - FILTER_FIRST_APP_ROW] : "";
         }
         ApplyFilterSort();
         SaveConfig();
@@ -397,14 +403,18 @@ void Album::DrawGrid() {
 
             bool isCursor = (!mSidebarFocus && mGridCursor == fi);
 
-            Gfx::DrawRectFilled(x + 4, y + 4, THUMB_W, THUMB_H, Gfx::COLOR_SHADOW);
+            const int thumbX = x + (cellW - THUMB_W) / 2;
+            const int thumbY = y + (cellH - THUMB_H) / 2;
 
-            Gfx::DrawRectFilled(x + (cellW - THUMB_W) / 2, y + (cellH - THUMB_H) / 2,
-                               THUMB_W, THUMB_H, th.thumbPlaceholder);
+            Gfx::DrawRectFilled(thumbX + 4, thumbY + 4, THUMB_W, THUMB_H,
+                                Gfx::COLOR_SHADOW);
+
+            Gfx::DrawRectFilled(thumbX, thumbY, THUMB_W, THUMB_H,
+                                th.thumbPlaceholder);
 
             if (item.thumbnail) {
-                Gfx::DrawTextureCover(item.thumbnail, x + (cellW - THUMB_W) / 2,
-                                     y + (cellH - THUMB_H) / 2, THUMB_W, THUMB_H);
+                Gfx::DrawTextureCover(item.thumbnail, thumbX, thumbY,
+                                      THUMB_W, THUMB_H);
             }
 
             if (item.type == MediaType::Video) {
@@ -412,16 +422,16 @@ void Album::DrawGrid() {
                     ? FormatDuration(item.durationSec) : "Video";
                 int bw = Gfx::GetTextWidth(22, dur) + 14;
                 int bh = 28;
-                int bx = x + THUMB_W - bw - 4;
-                int by = y + THUMB_H - bh - 4;
+                int bx = thumbX + THUMB_W - bw - 4;
+                int by = thumbY + THUMB_H - bh - 4;
                 Gfx::DrawRectRounded(bx, by, bw, bh, 4, Gfx::COLOR_VIDEO_BADGE);
                 Gfx::Print(bx + bw / 2, by + bh / 2, 22, Gfx::COLOR_WHITE,
                            dur, Gfx::ALIGN_CENTER);
             }
 
             if (mMultiSelect && fi < (int)mSelected.size()) {
-                int cx2 = x + THUMB_W - 20;
-                int cy2 = y + 14;
+                int cx2 = thumbX + THUMB_W - 20;
+                int cy2 = thumbY + 14;
                 bool sel = mSelected[fi];
                 SDL_Color color = sel ? Gfx::COLOR_DELETE : th.textDim;
 
@@ -435,8 +445,8 @@ void Album::DrawGrid() {
 
             if (mTransferMultiSelect && fi < (int)mTransferSelected.size()) {
                 bool sel = mTransferSelected[fi];
-                int cx2 = x + THUMB_W - 20;
-                int cy2 = y + 14;
+                int cx2 = thumbX + THUMB_W - 20;
+                int cy2 = thumbY + 14;
                 SDL_Color color = sel ? Gfx::COLOR_ACCENT : th.textDim;
                 Gfx::DrawCircleFilled(cx2, cy2, 16, color);
                 Gfx::DrawCircleFilled(cx2, cy2, 13, {0xff, 0xff, 0xff, 0xff});
@@ -447,8 +457,6 @@ void Album::DrawGrid() {
             }
 
             if (isCursor) {
-                int thumbX = x + (cellW - THUMB_W) / 2;
-                int thumbY = y + (cellH - THUMB_H) / 2;
                 SDL_Color ringColor = Gfx::COLOR_SELECTED_RING;
                 if (mMultiSelect) ringColor = Gfx::COLOR_DELETE;
                 else if (mTransferMultiSelect) ringColor = Gfx::COLOR_ACCENT;
@@ -553,20 +561,31 @@ void Album::DrawDeleteConfirmDialog(const std::string& title, int bw, int bh) {
     int btnW = 160, btnH = 52;
 
     const char* labels[2] = { "Delete", "Cancel" };
-    SDL_Color colors[2]   = { {0xde, 0x3b, 0x2e, 0xff}, th.textDim };
+
+    const SDL_Color accent   = Gfx::COLOR_ACCENT;
+    const SDL_Color tint     = { 0xe8, 0xf3, 0xf9, 0xff };
+    const SDL_Color idleText = { 0x3a, 0x44, 0x4e, 0xff };
 
     for (int i = 0; i < 2; i++) {
         int btnX = bx + (bw - btnW * 2 - gap) / 2 + i * (btnW + gap);
         bool sel = (i == mOverlaySel);
-        Gfx::DrawRectRounded(btnX, btnY, btnW, btnH, 8,
-                             sel ? colors[i] : th.sidebarSel);
+
         if (sel) {
-            Gfx::DrawRectRoundedOutline(btnX, btnY, btnW, btnH, 8,
-                                       Gfx::COLOR_ACCENT, 4);
+            Gfx::DrawRectRoundedOutline(btnX - 4, btnY - 4, btnW + 8, btnH + 8, 14,
+                                        { 0x00, 0x00, 0x00, 0x59 }, 2);
+            Gfx::DrawRectRounded(btnX, btnY, btnW, btnH, 10, accent);
+            Gfx::DrawRectRoundedOutline(btnX, btnY, btnW, btnH, 10,
+                                        Gfx::COLOR_WHITE, 4);
+            Gfx::Print(btnX + btnW / 2, btnY + btnH / 2, 28, Gfx::COLOR_WHITE,
+                       labels[i], Gfx::ALIGN_CENTER);
+        } else {
+            SDL_Color border = accent;
+            border.a = 0x4d;
+            Gfx::DrawRectRounded(btnX, btnY, btnW, btnH, 10, tint);
+            Gfx::DrawRectRoundedOutline(btnX, btnY, btnW, btnH, 10, border, 2);
+            Gfx::Print(btnX + btnW / 2, btnY + btnH / 2, 26, idleText,
+                       labels[i], Gfx::ALIGN_CENTER);
         }
-        Gfx::Print(btnX + btnW / 2, btnY + btnH / 2, 26,
-                   sel ? Gfx::COLOR_WHITE : colors[i],
-                   labels[i], Gfx::ALIGN_CENTER);
     }
 }
 
@@ -577,8 +596,8 @@ void Album::DrawFilterPanel() {
     int spacing = 80;
     int py = startY + 1 * spacing;
     int itemH = 42;
-    int numItems = 3 + 1 + (int)mAppNames.size();
-    int sepIdx = 3;
+    int numItems = FILTER_TYPE_ROWS + 1 + (int)mAppNames.size();
+    int sepIdx = FILTER_TYPE_ROWS;
     int ph = 20 + numItems * itemH + 16;
     if (py + ph > Gfx::SCREEN_HEIGHT - 10)
         py = Gfx::SCREEN_HEIGHT - 10 - ph;
@@ -604,8 +623,10 @@ void Album::DrawFilterPanel() {
         if (i == 0)      { label = "All Media";     active = (mFilter == FilterMode::All && mFilterApp.empty()); }
         else if (i == 1) { label = "Screenshots";   active = (mFilter == FilterMode::Screenshots && mFilterApp.empty()); }
         else if (i == 2) { label = "Videos";        active = (mFilter == FilterMode::Videos && mFilterApp.empty()); }
+        else if (i == 3) { label = "Photos";        active = (mFilter == FilterMode::Photos && mFilterApp.empty()); }
+        else if (i == 4) { label = "Recordings";    active = (mFilter == FilterMode::Recordings && mFilterApp.empty()); }
         else {
-            label = mAppNames[i - 4];
+            label = mAppNames[i - FILTER_FIRST_APP_ROW];
             active = (mFilterApp == label);
         }
 

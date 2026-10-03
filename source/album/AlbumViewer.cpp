@@ -27,7 +27,35 @@ void Album::OpenViewer(int filteredIdx) {
     }
 }
 
+// Which item left/right moves to. Normally the whole album in mFiltered, but
+// when the viewer was opened from the camera's recent shots it is confined to
+// that session's shots, so browsing them does not wander off into unrelated
+// media. Returns a filtered index, or -1 when there is nowhere to go.
+int Album::ViewerStep(int dir) const {
+    if (!mCamViewerSet.empty()) {
+        const int n = (int)mCamViewerSet.size();
+        for (int i = 0; i < n; i++) {
+            if (mCamViewerSet[i] != mViewerItem) continue;
+            const int k = (i + dir + n) % n;
+            return mCamViewerSet[k];
+        }
+        // The open item is not one of the recent shots: fall through to the
+        // full album rather than stranding the player.
+    }
+    const int total = (int)mFiltered.size();
+    if (total <= 0) return -1;
+    return (mViewerItem + dir + total) % total;
+}
+
 void Album::CloseViewer() {
+    // Latched into a local before anything below can clear the member: the
+    // pending-refresh branch calls Refresh(), which clears mCamReturnToCamera
+    // because a background rescan must not reopen the camera. Reading the
+    // member after that point would always be false.
+    const bool returnToCamera = mCamReturnToCamera;
+    mCamReturnToCamera = false;
+    mCamViewerSet.clear();
+
     if (mViewerTex) { Gfx::DestroyTexture(mViewerTex); mViewerTex = nullptr; }
     if (mVideoTexture) { SDL_DestroyTexture(mVideoTexture); mVideoTexture = nullptr; }
     mVideoDecoder.Close();
@@ -47,6 +75,13 @@ void Album::CloseViewer() {
         mPendingRefresh = false;
         Refresh();
     }
+
+    // Opened from the camera's recent shots, so closing goes back there rather
+    // than to the album grid.
+    if (returnToCamera) {
+        ALBUM_LOG("Camera: returning from the viewer to the camera");
+        EnterCameraMode();
+    }
 }
 
 // Single-item delete
@@ -57,6 +92,10 @@ void Album::ExecuteDelete() {
 
     remove(item.path.c_str());
     OSReport("[ALBUM] Deleted: %s", item.path.c_str());
+
+    // Copied before the erase below: item is a reference into mAllItems and
+    // dangles afterwards.
+    const std::string deletedPath = item.path;
 
     StopThumbWorkers();
 
@@ -75,14 +114,58 @@ void Album::ExecuteDelete() {
 
     StartThumbWorkers();
 
+    // The camera keeps its own recent-shot list, so the shot has to come out of
+    // that too. Otherwise the grid goes on offering a file that no longer
+    // exists, and opening it fails with "Could not find that shot".
+    for (size_t i = 0; i < mCamThumbNames.size(); ) {
+        if (mCamThumbNames[i] != deletedPath) { i++; continue; }
+        if (i < mCamThumbs.size() && mCamThumbs[i]) Gfx::DestroyTexture(mCamThumbs[i]);
+        mCamThumbs.erase(mCamThumbs.begin() + i);
+        mCamThumbNames.erase(mCamThumbNames.begin() + i);
+        // Kept in lockstep with the other two, or the audio flags would slide
+        // onto the wrong entries and show a speaker on the wrong clip.
+        if (i < mCamThumbAudio.size()) mCamThumbAudio.erase(mCamThumbAudio.begin() + i);
+        if      ((int)mCamThumbSel == (int)i) mCamThumbSel = -1;
+        else if ((int)mCamThumbSel >  (int)i) mCamThumbSel--;
+        i = 0;   // indices shifted; rescan from the top
+    }
+
     ApplyFilterSort();
+
+    // mFiltered was rebuilt, so the restricted navigation set is stale.
+    RebuildCamViewerSet();
+
     int total = (int)mFiltered.size();
     if (total == 0) {
         CloseViewer();
-    } else {
-        if (mViewerItem >= total) mViewerItem = total - 1;
-        NavigateToItem(mViewerItem, true);
+        return;
     }
+
+    // In the recent-shots viewer, stay inside the set. Holding the same album
+    // index after an erase slides the viewer onto whatever unrelated photo took
+    // that slot, which is not in mCamViewerSet -- and ViewerStep then falls
+    // through to navigating the entire album.
+    if (!mCamViewerSet.empty()) {
+        int next = -1;
+        for (size_t f = 0; f < mCamViewerSet.size(); f++) {
+            if (mCamViewerSet[f] >= mViewerItem) { next = mCamViewerSet[f]; break; }
+        }
+        if (next < 0) next = mCamViewerSet.back();
+        mViewerItem = next;
+        ALBUM_LOG("Camera: delete moved the viewer to recent shot %d of %u",
+                  mViewerItem, (unsigned)mCamViewerSet.size());
+    } else if (mCamReturnToCamera) {
+        // The last shot of this session is gone, so there is nothing left to
+        // browse. CloseViewer sees the latched flag and returns to the camera,
+        // which is where the player came from. Falling through to the album
+        // here would strand them in a viewer they did not ask for.
+        ALBUM_LOG("Camera: last recent shot deleted, returning to the camera");
+        CloseViewer();
+        return;
+    } else if (mViewerItem >= total) {
+        mViewerItem = total - 1;
+    }
+    NavigateToItem(mViewerItem, true);
 }
 
 // Save video frame as screenshot
@@ -228,10 +311,9 @@ void Album::UpdateViewer(const Input& input) {
 
         if (mVideoPlaying && !mVideoPaused) {
             int cur   = mViewerItem;
-            int total = (int)mFiltered.size();
             int next  = -1;
-            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = (cur + 1) % total;
-            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = (cur - 1 + total) % total;
+            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = ViewerStep(1);
+            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = ViewerStep(-1);
             if (next >= 0 && next != cur) {
                 NavigateToItem(next, false);
                 return;
@@ -246,10 +328,9 @@ void Album::UpdateViewer(const Input& input) {
             UpdateVideoPlayback();
         } else {
             int cur   = mViewerItem;
-            int total = (int)mFiltered.size();
             int next  = -1;
-            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = (cur + 1) % total;
-            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = (cur - 1 + total) % total;
+            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = ViewerStep(1);
+            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = ViewerStep(-1);
             if (next >= 0 && next != cur) {
                 NavigateToItem(next, false);
                 return;
@@ -276,11 +357,9 @@ void Album::UpdateViewer(const Input& input) {
         // Image viewer controls
 
         if (mViewZoom <= ZOOM_MIN + 0.01f) {
-            int cur   = mViewerItem;
-            int total = (int)mFiltered.size();
             int next  = -1;
-            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = (cur + 1) % total;
-            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = (cur - 1 + total) % total;
+            if (input.IsPressed(Input::BUTTON_RIGHT) || input.IsPressed(Input::BUTTON_R)) next = ViewerStep(1);
+            if (input.IsPressed(Input::BUTTON_LEFT)  || input.IsPressed(Input::BUTTON_L))  next = ViewerStep(-1);
             if (next >= 0) {
                 NavigateToItem(next, true);
                 return;
@@ -392,7 +471,7 @@ void Album::UpdateVideoPlayback() {
                 }
             }
             mVideoDecoder.ReadFrame(mVideoTexture);
-        } else {
+        } else if (avDrift < mFrameDelay / 1000.0) {
             mVideoDecoder.ReadFrame(mVideoTexture);
         }
     } else {

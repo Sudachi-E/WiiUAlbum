@@ -1,5 +1,6 @@
 ﻿#include "Album.hpp"
 #include "../camera/CameraCapture.hpp"
+#include "../video/VideoRecorder.hpp"
 #include "../ui/Glyphs.hpp"
 #include "../ui/Log.hpp"
 
@@ -97,8 +98,24 @@ void Album::ApplyCameraSettings() {
     mCameraInstance = mSettingsCamSource;
 }
 
+void Album::ApplyMicSetting() {
+    if (mSettingsCamMic) {
+        if (!mMicReady) {
+            mMicReady = mMic.Open(0);
+            if (!mMicReady) mMicError = mMic.GetError();
+            else            mMicError.clear();
+        }
+    } else {
+        if (mMicReady) mMic.Close();
+        mMicReady = false;
+        mMicError.clear();
+    }
+}
 void Album::EnterCameraMode() {
     if (mCameraActive) return;
+
+    const bool keepThumbs = mCamKeepThumbs;
+    mCamKeepThumbs = false;
 
     if (mMultiSelect) ExitMultiSelect(true);
     if (mTransferMultiSelect) {
@@ -109,15 +126,10 @@ void Album::EnterCameraMode() {
     mTransferMode      = TransferMode::None;
     mViewerSidePanel   = false;
     mViewerConfirmDelete = false;
-    mSaveNotifEndTime  = 0;
-
-    if (!mMicReady) {
-        mMicReady = mMic.Open(0);
-        if (!mMicReady) mMicError = mMic.GetError();
-        else            mMicError.clear();
-    }
+mSaveNotifEndTime  = 0;
 
     mCameraActive = true;
+    ApplyMicSetting();
     ApplyCameraSettings();
 
     mCameraHasFrame   = false;
@@ -125,14 +137,24 @@ void Album::EnterCameraMode() {
     mCamFlashStart    = 0;
     mCamFlashEnd      = 0;
     mCamNotifEnd      = 0;
-    mCamShotsTaken    = 0;
+    mCamShotsTaken    = keepThumbs ? mCamShotsTaken : 0;
+    mCamFullscreen  = keepThumbs ? mCamFullscreen : false;
+    mCamWide       = keepThumbs ? mCamWide : false;
     mCamDiagLastTime  = SDL_GetTicks();
-    ClearCameraThumbs();
+    if (!keepThumbs) ClearCameraThumbs();
 
     {
         std::string dir = ComputeSdRoot() + "/wiiu/apps/WiiUAlbum";
         mkdir(dir.c_str(), 0777);
         Camera::SetDumpPath(dir + "/cam_raw.nv12");
+    }
+
+    {
+        struct stat st;
+        if (stat(mPathCamPhotos.c_str(), &st) != 0)
+            mkdir(mPathCamPhotos.c_str(), 0777);
+        if (stat(mPathCamVideos.c_str(), &st) != 0)
+            mkdir(mPathCamVideos.c_str(), 0777);
     }
 
     mOverlay     = Overlay::None;
@@ -147,13 +169,18 @@ void Album::EnterCameraMode() {
     }
 }
 
-void Album::ExitCameraMode() {
+void Album::ExitCameraMode(bool keepThumbs) {
     WriteCameraDiagnostics("final");
     if (mCamRecording) StopCameraRecording(false);
     Camera::Close();
 
     if (mCameraTexture) { Gfx::DestroyTexture(mCameraTexture); mCameraTexture = nullptr; }
-    ClearCameraThumbs();
+
+    if (keepThumbs) {
+        mCamKeepThumbs = true;
+    } else {
+        ClearCameraThumbs();
+    }
 
     mMic.Close();
     mMicReady = false;
@@ -178,6 +205,9 @@ void Album::ClearCameraThumbs() {
     for (auto* tex : mCamThumbs) Gfx::DestroyTexture(tex);
     mCamThumbs.clear();
     mCamThumbNames.clear();
+    mCamThumbAudio.clear();
+    mCamThumbSel    = -1;
+    mCamThumbScroll = 0;
 }
 
 std::string Album::CameraNextFileName() const {
@@ -187,14 +217,57 @@ std::string Album::CameraNextFileName() const {
     localtime_r(&now, &tmv);
     strftime(stamp, sizeof(stamp), "Camera_%Y-%m-%d_%H-%M-%S", &tmv);
 
-    std::string outPath = mPathScreenshots + "/" + stamp + ".png";
+    std::string outPath = mPathCamPhotos + "/" + stamp + ".png";
     struct stat st;
     int counter = 1;
     while (stat(outPath.c_str(), &st) == 0) {
-        outPath = mPathScreenshots + "/" + stamp + "_" +
+        outPath = mPathCamPhotos + "/" + stamp + "_" +
                   std::to_string(counter++) + ".png";
     }
     return outPath;
+}
+
+static bool IsClipEntry(const std::string& path) {
+    size_t dot = path.rfind('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = path.substr(dot);
+    for (auto& c : ext) c = (char)tolower((unsigned char)c);
+    return ext == ".avi" || ext == ".mp4" || ext == ".mkv" || ext == ".mov";
+}
+
+void Album::AddCameraThumb(SDL_Surface* frame, const std::string& path,
+                           bool hasAudio) {
+    if (!frame || path.empty()) return;
+
+    SDL_Surface* lit = nullptr;
+    SDL_Surface* src = frame;
+    if (mCamBrightenOn) {
+        lit = SDL_ConvertSurfaceFormat(frame, SDL_PIXELFORMAT_RGBA32, 0);
+        if (lit) {
+            BrightenRgba((uint8_t*)lit->pixels, lit->w, lit->h, lit->pitch);
+            src = lit;
+        }
+    }
+
+    SDL_Surface* thumbSurf = MakeThumbnail(src, CAM_THUMB_W, CAM_THUMB_H);
+    if (lit) SDL_FreeSurface(lit);
+    if (!thumbSurf) return;
+
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(Gfx::GetRenderer(), thumbSurf);
+    SDL_FreeSurface(thumbSurf);
+    if (!tex) return;
+
+    if ((int)mCamThumbs.size() >= CAM_MAX_THUMBS) {
+        if (mCamThumbs.front()) Gfx::DestroyTexture(mCamThumbs.front());
+        mCamThumbs.erase(mCamThumbs.begin());
+        mCamThumbNames.erase(mCamThumbNames.begin());
+        mCamThumbAudio.erase(mCamThumbAudio.begin());
+        if      (mCamThumbSel >  0) mCamThumbSel--;
+        else if (mCamThumbSel == 0) mCamThumbSel = -1;
+    }
+    mCamThumbs.push_back(tex);
+    mCamThumbNames.push_back(path);
+    mCamThumbAudio.push_back(hasAudio ? 1 : 0);
 }
 
 void Album::CaptureCameraPhoto() {
@@ -209,40 +282,68 @@ void Album::CaptureCameraPhoto() {
     }
 
     std::string outPath = CameraNextFileName();
-    bool ok = (IMG_SavePNG(frame, outPath.c_str()) == 0);
+
+    SDL_Surface* scaled = nullptr;
+    if (mCamWide) {
+        const int outW = frame->w;
+        const int outH = outW * 9 / 16;
+        scaled = SDL_CreateRGBSurfaceWithFormat(0, outW, outH, 32,
+                                                SDL_PIXELFORMAT_RGBA32);
+        if (scaled && SDL_BlitScaled(frame, nullptr, scaled, nullptr) == 0) {
+            ALBUM_LOG("[CAM] wide screen photo: %dx%d -> %dx%d", frame->w, frame->h,
+                      scaled->w, scaled->h);
+        } else {
+            if (scaled) SDL_FreeSurface(scaled);
+            scaled = nullptr;
+            ALBUM_ERROR("Camera: 16:9 conversion failed, saving 4:3");
+        }
+    }
+    SDL_Surface* shot = scaled ? scaled : frame;
+
+    SDL_Surface* lit = nullptr;
+    if (mCamBrightenOn) {
+        lit = SDL_ConvertSurfaceFormat(shot, SDL_PIXELFORMAT_RGBA32, 0);
+        if (lit) {
+            const size_t mid = (size_t)(lit->h / 2) * (size_t)lit->pitch
+                             + (size_t)(lit->w / 2) * 4;
+            const int before = (int)((const uint8_t*)lit->pixels)[mid];
+            BrightenRgba((uint8_t*)lit->pixels, lit->w, lit->h, lit->pitch);
+            const int after = (int)((const uint8_t*)lit->pixels)[mid];
+            ALBUM_LOG("[CAM] flash on: %dx%d pitch=%d fmt=0x%x, centre byte %d -> %d",
+                      lit->w, lit->h, lit->pitch, (unsigned)lit->format,
+                      before, after);
+            shot = lit;
+        } else {
+            ALBUM_ERROR("Camera: flash copy failed, saving unlit photo");
+        }
+    } else {
+        ALBUM_LOG("[CAM] flash off: saving the frame unlit");
+    }
+
+    bool ok = (IMG_SavePNG(shot, outPath.c_str()) == 0);
     if (!ok) {
         ALBUM_ERROR("Camera: photo save failed: %s", outPath.c_str());
+        if (lit) SDL_FreeSurface(lit);
+        if (scaled) SDL_FreeSurface(scaled);
         mCamNotifText  = "Could not write the photo to the SD card";
         mCamNotifError = true;
         mCamNotifEnd   = SDL_GetTicks() + 2500;
         return;
     }
+    if (scaled) SDL_FreeSurface(scaled);
 
-    // Remember a thumbnail for the recent shots grid.
-    SDL_Surface* thumbSurf = MakeThumbnail(frame, CAM_THUMB_W, CAM_THUMB_H);
-    if (thumbSurf) {
-        SDL_Texture* tex = SDL_CreateTextureFromSurface(Gfx::GetRenderer(), thumbSurf);
-        SDL_FreeSurface(thumbSurf);
-        if (tex) {
-            if ((int)mCamThumbs.size() >= CAM_MAX_THUMBS) {
-                if (mCamThumbs.front()) Gfx::DestroyTexture(mCamThumbs.front());
-                mCamThumbs.erase(mCamThumbs.begin());
-                mCamThumbNames.erase(mCamThumbNames.begin());
-            }
-            mCamThumbs.push_back(tex);
-            mCamThumbNames.push_back(outPath);
-        }
-    }
+    AddCameraThumb(frame, outPath, false);
 
     mCamShotsTaken++;
     mCamNotifText  = "Photo saved";
     mCamNotifError = false;
     mCamNotifEnd   = SDL_GetTicks() + 1800;
 
-    // Shutter flash.
-    Uint32 now = SDL_GetTicks();
-    mCamFlashStart = now;
-    mCamFlashEnd   = now + 320;
+    {
+        Uint32 now = SDL_GetTicks();
+        mCamFlashStart = now;
+        mCamFlashEnd   = now + 320;
+    }
 
     OSReport("[ALBUM] Camera photo saved: %s", outPath.c_str());
 }
@@ -271,10 +372,12 @@ void Album::ToggleCameraRecording() {
     localtime_r(&now, &tmv);
     strftime(stamp, sizeof(stamp), "Video_%Y-%m-%d_%H-%M-%S", &tmv);
 
-    mCamRecordPath = mPathVideos + "/" + stamp + ".avi";
+    mCamRecordPath = mPathCamVideos + "/" + stamp + ".avi";
 
     mRecorder.SetMic(mMicReady ? &mMic : nullptr);
-    if (!mRecorder.Start(mCamRecordPath, 640, 480, mCameraFps)) {
+    mRecorder.SetBrighten(mCamBrightenOn);
+    const int recH = mCamWide ? 360 : 480;
+    if (!mRecorder.Start(mCamRecordPath, 640, recH, mCameraFps)) {
         mCamNotifText  = "Could not start recording: " + mRecorder.GetError();
         mCamNotifError = true;
         mCamNotifEnd   = SDL_GetTicks() + 3000;
@@ -317,6 +420,10 @@ void Album::StopCameraRecording(bool notify) {
                      secs, frames, (unsigned long long)(bytes / 1024));
             mCamRecordNotifText = buf;
             mPendingRefresh = true;
+
+            const bool clipHasAudio = mRecorder.HasAudio();
+            AddCameraThumb(Camera::AcquireFrame(mCameraMirror, true), path,
+                           clipHasAudio);
         }
         mCamRecordNotifEnd = SDL_GetTicks() + 3200;
     }
@@ -585,6 +692,138 @@ void Album::DrawCameraDiagnostics() {
     }
 }
 
+void Album::UpdateCameraThumbs(const Input& input) {
+    const int n = (int)mCamThumbs.size();
+    if (n == 0) {
+        mCamThumbSel = -1;
+        return;
+    }
+
+    const int rows    = mCamThumbRows > 0 ? mCamThumbRows : 2;
+    const int tcols  = mCamThumbCols > 0 ? mCamThumbCols : CAM_THUMB_COLS;
+    const int perPage = rows * tcols;
+
+    int dirH = 0, dirV = 0;
+    if (input.IsHeld(Input::BUTTON_RIGHT)) dirH =  1;
+    if (input.IsHeld(Input::BUTTON_LEFT))  dirH = -1;
+    if (input.IsHeld(Input::BUTTON_DOWN))  dirV =  1;
+    if (input.IsHeld(Input::BUTTON_UP))    dirV = -1;
+
+    const Uint32 now = SDL_GetTicks();
+    const int stepH = mCamThumbRepeatH.Update(dirH, now);
+    const int stepV = mCamThumbRepeatV.Update(dirV, now);
+
+    int move = 0;
+    if (stepV) move = tcols * stepV;
+    else if (stepH) move = stepH;
+    if (!move) return;
+
+    if (mCamThumbSel < 0) {
+        mCamThumbSel = n - 1;
+    } else if (move == 1 || move == -1) {
+        int col = (mCamThumbSel % tcols + move + tcols) % tcols;
+        mCamThumbSel = (mCamThumbSel / tcols) * tcols + col;
+    } else {
+        mCamThumbSel += move;
+    }
+
+    if (mCamThumbSel < 0)  mCamThumbSel += tcols;
+    if (mCamThumbSel >= n) mCamThumbSel -= tcols;
+    if (mCamThumbSel < 0)  mCamThumbSel = 0;
+    if (mCamThumbSel >= n) mCamThumbSel = n - 1;
+
+    if (mCamThumbSel < mCamThumbScroll)
+        mCamThumbScroll = mCamThumbSel;
+    else if (mCamThumbSel >= mCamThumbScroll + perPage)
+        mCamThumbScroll = mCamThumbSel - perPage + 1;
+
+    int maxScroll = n - perPage;
+    if (maxScroll < 0) maxScroll = 0;
+    if (mCamThumbScroll > maxScroll) mCamThumbScroll = maxScroll;
+    if (mCamThumbScroll < 0)          mCamThumbScroll = 0;
+}
+
+void Album::RebuildCamViewerSet() {
+    mCamViewerSet.clear();
+    for (const std::string& p : mCamThumbNames) {
+        for (size_t i = 0; i < mAllItems.size(); i++) {
+            if (mAllItems[i].path != p) continue;
+            for (size_t f = 0; f < mFiltered.size(); f++) {
+                if (mFiltered[f] == (int)i) {
+                    mCamViewerSet.push_back((int)f);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+}
+
+void Album::OpenCameraThumb(int idx) {
+    if (idx < 0 || idx >= (int)mCamThumbNames.size()) return;
+    const std::string path = mCamThumbNames[idx];
+
+    bool found = false;
+    for (int attempt = 0; attempt < 2 && !found; attempt++) {
+        for (size_t i = 0; i < mAllItems.size(); i++) {
+            if (mAllItems[i].path == path) { found = true; break; }
+        }
+        if (!found && attempt == 0) {
+            ALBUM_LOG("Camera: rescanning the album to find %s", path.c_str());
+            Refresh();
+        }
+    }
+    if (!found) {
+        mCamNotifText  = "Could not find that shot on the SD card";
+        mCamNotifError = true;
+        mCamNotifEnd   = SDL_GetTicks() + 2500;
+        return;
+    }
+
+    bool visible = false;
+    for (size_t f = 0; f < mFiltered.size(); f++) {
+        for (size_t i = 0; i < mAllItems.size(); i++) {
+            if (mAllItems[i].path == path && mFiltered[f] == (int)i) {
+                visible = true;
+                break;
+            }
+        }
+        if (visible) break;
+    }
+    if (!visible) {
+        mCamNotifText  = "That shot is hidden by the current filter";
+        mCamNotifError = true;
+        mCamNotifEnd   = SDL_GetTicks() + 2500;
+        return;
+    }
+
+    ExitCameraMode(true);
+
+    int allIdx = -1;
+    for (size_t i = 0; i < mAllItems.size(); i++) {
+        if (mAllItems[i].path == path) { allIdx = (int)i; break; }
+    }
+    if (allIdx < 0) {
+        ALBUM_ERROR("Camera: %s vanished from the album after the rescan",
+                    path.c_str());
+        return;
+    }
+
+    RebuildCamViewerSet();
+    ALBUM_LOG("Camera: viewer limited to %u recent shot(s)", (unsigned)mCamViewerSet.size());
+
+    for (size_t f = 0; f < mFiltered.size(); f++) {
+        if (mFiltered[f] == allIdx) {
+            ALBUM_LOG("Camera: opening recent shot %s (filtered %u)",
+                      path.c_str(), (unsigned)f);
+            mCamReturnToCamera = true;
+            OpenViewer((int)f);
+            return;
+        }
+    }
+    ALBUM_ERROR("Camera: %s is not in the filtered list", path.c_str());
+}
+
 void Album::UploadCameraFrame(SDL_Surface* frame) {
     if (!frame) return;
 
@@ -619,7 +858,7 @@ void Album::UploadCameraFrame(SDL_Surface* frame) {
     mCamFrameStart = SDL_GetTicks();
 }
 
-void Album::UpdateCamera(const Input& input) {
+void Album::UpdateCamera(const Input& input, bool handleInput) {
     // Pull the newest frame into the preview texture.
     SDL_Surface* frame = CameraRunning()
         ? Camera::AcquireFrame(mCameraMirror, true) : nullptr;
@@ -647,34 +886,50 @@ void Album::UpdateCamera(const Input& input) {
         mCamDiagLastTime = now;
     }
 
-    const bool diagChord =
-        input.IsHeld(Input::BUTTON_L) && input.IsHeld(Input::BUTTON_R) &&
-        input.IsHeld(Input::BUTTON_X) && input.IsHeld(Input::BUTTON_A) &&
-        input.IsHeld(Input::BUTTON_B);
-    static bool diagChordWas = false;
+    if (handleInput) {
+        const bool diagChord =
+            input.IsHeld(Input::BUTTON_L) && input.IsHeld(Input::BUTTON_R) &&
+            input.IsHeld(Input::BUTTON_X) && input.IsHeld(Input::BUTTON_A) &&
+            input.IsHeld(Input::BUTTON_B);
+        static bool diagChordWas = false;
 
-    if (diagChord && !diagChordWas) {
-        TriggerCameraHint(CAM_HINT_DIAG);
-    } else if (!diagChord) {
-        if (input.IsPressed(Input::BUTTON_B)) {
-            ExitCameraMode();
-        } else if (input.IsPressed(Input::BUTTON_R)) {
-            if (!mPointerConsumedClick) TriggerCameraHint(CAM_HINT_SHUTTER);
-        } else if (input.IsPressed(Input::BUTTON_X)) {
-            if (CameraRunning()) TriggerCameraHint(CAM_HINT_FLIP);
-            else                 TriggerCameraHint(CAM_HINT_FPS); // doubles as "Retry"
-        } else if (input.IsPressed(Input::BUTTON_Y)) {
-            TriggerCameraHint(CAM_HINT_GRID);
-        } else if (input.IsPressed(Input::BUTTON_ZR) || input.IsPressed(Input::BUTTON_ZL)) {
-            TriggerCameraHint(CAM_HINT_FPS);
-        } else if (input.IsPressed(Input::BUTTON_L)) {
-            ToggleCameraRecording();
+        if (diagChord && !diagChordWas) {
+            TriggerCameraHint(CAM_HINT_DIAG);
+        } else if (!diagChord) {
+            if (!mCamDiagOverlay) UpdateCameraThumbs(input);
+
+            if (input.IsPressed(Input::BUTTON_B)) {
+                ExitCameraMode();
+            } else if (input.IsPressed(Input::BUTTON_R)) {
+                if (!mPointerConsumedClick) TriggerCameraHint(CAM_HINT_SHUTTER);
+            } else if (input.IsPressed(Input::BUTTON_A)) {
+                if (!mPointerConsumedClick && mCamThumbSel >= 0)
+                    TriggerCameraHint(CAM_HINT_OPEN);
+            } else if (input.IsPressed(Input::BUTTON_PLUS)) {
+                OpenSettings(1);
+            } else if (input.IsPressed(Input::BUTTON_MINUS)) {
+                mCamFullscreen = !mCamFullscreen;
+                ALBUM_LOG("Camera: full screen %s", mCamFullscreen ? "on" : "off");
+            } else if (input.IsPressed(Input::BUTTON_X)) {
+                if (CameraRunning()) TriggerCameraHint(CAM_HINT_FLIP);
+                else                 TriggerCameraHint(CAM_HINT_FPS);
+            } else if (input.IsPressed(Input::BUTTON_Y)) {
+                TriggerCameraHint(CAM_HINT_GRID);
+            } else if (input.IsPressed(Input::BUTTON_ZL)) {
+                TriggerCameraHint(CAM_HINT_FPS);
+            } else if (input.IsPressed(Input::BUTTON_ZR)) {
+                mCamWide = !mCamWide;
+                ALBUM_LOG("Camera: wide screen preview %s", mCamWide ? "on" : "off");
+            } else if (input.IsPressed(Input::BUTTON_L)) {
+                ToggleCameraRecording();
+            }
         }
+        diagChordWas = diagChord;
     }
-    diagChordWas = diagChord;
 
     if (mCamRecording && frame)
-        mRecorder.PushFrame((const uint8_t*)frame->pixels, frame->pitch);
+        mRecorder.PushFrame((const uint8_t*)frame->pixels, frame->pitch,
+                               Camera::WIDTH, Camera::HEIGHT);
 }
 
 void Album::TriggerCameraHint(int index) {
@@ -728,11 +983,46 @@ void Album::TriggerCameraHint(int index) {
             if (CameraRunning()) ToggleCameraRecording();
             break;
 
+        case CAM_HINT_OPEN:
+            OpenCameraThumb(mCamThumbSel);
+            break;
+
+        case CAM_HINT_SETTINGS:
+            OpenSettings(1);
+            break;
+
+        case CAM_HINT_FULLSCREEN:
+            mCamFullscreen = !mCamFullscreen;
+            ALBUM_LOG("Camera: full screen %s", mCamFullscreen ? "on" : "off");
+            break;
+
+        case CAM_HINT_WIDE:
+            mCamWide = !mCamWide;
+            ALBUM_LOG("Camera: wide screen preview %s", mCamWide ? "on" : "off");
+            break;
+
         default: break;
     }
 }
 
 bool Album::HandleCameraTouch(int px, int py) {
+    for (int i = 0; i < (int)mCamThumbs.size(); i++) {
+        const int* r = mCamThumbRect[i];
+        if (r[2] <= 0 || r[3] <= 0) continue;
+        if (TouchHitRect(px, py, r[0], r[1], r[2], r[3])) {
+            mCamThumbSel = i;
+            const int perPage = (mCamThumbRows > 0 ? mCamThumbRows : 2) * mCamThumbCols;
+            if (mCamThumbSel < mCamThumbScroll) mCamThumbScroll = mCamThumbSel;
+            else if (mCamThumbSel >= mCamThumbScroll + perPage)
+                mCamThumbScroll = mCamThumbSel - perPage + 1;
+            int maxScroll = (int)mCamThumbs.size() - perPage;
+            if (maxScroll < 0) maxScroll = 0;
+            if (mCamThumbScroll > maxScroll) mCamThumbScroll = maxScroll;
+            if (mCamThumbScroll < 0)          mCamThumbScroll = 0;
+            OpenCameraThumb(i);
+            return true;
+        }
+    }
     for (int i = 0; i < CAM_HINT_COUNT; i++) {
         const int* r = mCamHintRect[i];
         if (r[2] <= 0 || r[3] <= 0) continue;
@@ -830,39 +1120,43 @@ void Album::DrawCameraSidePanel(int px, int py, int pw, int ph) {
 
     struct Stat { const char* label; std::string value; };
     float measured = Camera::GetMeasuredFps();
-    Stat stats[5] = {
+    Stat stats[4] = {
         {"Resolution", std::to_string(Camera::WIDTH) + " x " + std::to_string(Camera::HEIGHT)},
         {"Frame rate",  std::to_string(mCameraFps) + " fps" +
                         (measured > 1.0f ? "  (" + std::to_string((int)(measured + 0.5f)) + " seen)" : "")},
         {"Source",      mCameraInstance ? "USB / DLC camera" : "GamePad camera"},
-        {"Photos",      std::to_string(mCamShotsTaken)},
         {"View",        mCameraMirror ? "Mirrored" : "Standard"},
     };
 
     constexpr int ROW_H = 38;
-    for (int i = 0; i < 5; i++) {
+    constexpr int ROW_SOURCE = 2;
+    constexpr int ROW_VIEW   = 3;
+    for (int i = 0; i < 4; i++) {
         int ry = iy + i * ROW_H;
         if (i) Gfx::DrawRectFilled(ix, ry - 4, iw, 1, th.separator);
         Gfx::Print(ix, ry + ROW_H / 2, 22, th.textDim, stats[i].label,
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
         Gfx::Print(ix + iw, ry + ROW_H / 2, 22,
-                   ((i == 4 && mCameraMirror) || i == 2) ? Gfx::COLOR_ACCENT : th.text,
+                   ((i == ROW_VIEW && mCameraMirror) || i == ROW_SOURCE)
+                       ? Gfx::COLOR_ACCENT : th.text,
                    stats[i].value, Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
     }
 
-    iy += ROW_H * 5 + 16;
+    iy += ROW_H * 4 + 16;
 
-    Gfx::Print(ix, iy, 24, th.text, "Recent shots", Gfx::ALIGN_LEFT);
-    std::string countStr = std::to_string((int)mCamThumbs.size()) + "/" +
-                           std::to_string(CAM_MAX_THUMBS);
-    Gfx::Print(ix + iw, iy, 22, th.textDim, countStr, Gfx::ALIGN_RIGHT);
+    Gfx::Print(ix, iy, 24, th.text, "Recent media", Gfx::ALIGN_LEFT);
+    Gfx::Print(ix + iw, iy, 22, th.textDim,
+               std::to_string((int)mCamThumbs.size()), Gfx::ALIGN_RIGHT);
     iy += 36;
 
     if (!mCamThumbNames.empty()) {
-        std::string latest = mCamThumbNames.back();
-        size_t slash = latest.rfind('/');
-        if (slash != std::string::npos) latest = latest.substr(slash + 1);
-        Gfx::Print(ix, iy, 20, th.textDim, "Last: " + latest, Gfx::ALIGN_LEFT);
+        int which = mCamThumbSel;
+        if (which < 0 || which >= (int)mCamThumbNames.size())
+            which = (int)mCamThumbNames.size() - 1;
+        std::string name = mCamThumbNames[which];
+        size_t slash = name.rfind('/');
+        if (slash != std::string::npos) name = name.substr(slash + 1);
+        Gfx::Print(ix, iy, 20, th.textDim, name, Gfx::ALIGN_LEFT);
         iy += 30;
     }
 
@@ -871,36 +1165,101 @@ void Album::DrawCameraSidePanel(int px, int py, int pw, int ph) {
     const int gridH = ph - (iy - py) - PAD;
     int rows = gridH / (cellH + CAM_THUMB_GAP);
     if (rows < 0) rows = 0;
+    mCamThumbRows = rows > 0 ? rows : 1;
+
+    int cols = iw / (cellW + CAM_THUMB_GAP);
+    if (cols < 1) cols = 1;
+    if (cols > CAM_THUMB_COLS) cols = CAM_THUMB_COLS;
+    mCamThumbCols = cols;
+
+    for (int i = 0; i < CAM_MAX_THUMBS; i++) {
+        mCamThumbRect[i][0] = mCamThumbRect[i][1] = 0;
+        mCamThumbRect[i][2] = mCamThumbRect[i][3] = 0;
+    }
+    if (mCamThumbSel >= (int)mCamThumbs.size())
+        mCamThumbSel = (int)mCamThumbs.size() - 1;
 
     if (mCamThumbs.empty()) {
         int boxH = rows > 0 ? rows * (cellH + CAM_THUMB_GAP) - CAM_THUMB_GAP : cellH;
         Gfx::DrawRectRoundedOutline(ix, iy, iw, boxH, 12, th.separator, 2);
         Gfx::Print(ix + iw / 2, iy + boxH / 2 - 12, 24, th.textDim,
-                   "Shots you take show up here", Gfx::ALIGN_CENTER);
+                   "Photos and clips you take", Gfx::ALIGN_CENTER);
         Gfx::Print(ix + iw / 2, iy + boxH / 2 + 20, 22, th.textDim,
-                   "and are saved to the album", Gfx::ALIGN_CENTER);
+                   "show up here, saved to the album", Gfx::ALIGN_CENTER);
     } else {
-        int shown = 0;
-        for (size_t i = 0; i < mCamThumbs.size() && shown < rows * CAM_THUMB_COLS; i++) {
-            int col = shown % CAM_THUMB_COLS;
-            int row = shown / CAM_THUMB_COLS;
-            int tx  = ix + col * (cellW + CAM_THUMB_GAP);
-            int ty  = iy + row * (cellH + CAM_THUMB_GAP);
+        const int perPage = rows * cols;
+        int maxScroll = (int)mCamThumbs.size() - perPage;
+        if (maxScroll < 0) maxScroll = 0;
+        if (mCamThumbScroll > maxScroll) mCamThumbScroll = maxScroll;
+        if (mCamThumbScroll < 0) mCamThumbScroll = 0;
 
+        for (size_t i = 0; i < mCamThumbs.size(); i++) {
+            const int slot = (int)i - mCamThumbScroll;
+            if (slot < 0 || slot >= perPage) continue;
+            const int col = slot % cols;
+            const int row = slot / cols;
+            const int tx  = ix + col * (cellW + CAM_THUMB_GAP);
+            const int ty  = iy + row * (cellH + CAM_THUMB_GAP);
+
+            Gfx::DrawRectFilled(tx, ty, cellW, cellH, th.thumbPlaceholder);
+            Gfx::DrawTexture(mCamThumbs[i], tx, ty, cellW, cellH);
+            MaskRoundedCorners(tx, ty, cellW, cellH, 8, th.cardBg);
+
+            mCamThumbRect[i][0] = tx;
+            mCamThumbRect[i][1] = ty;
+            mCamThumbRect[i][2] = cellW;
+            mCamThumbRect[i][3] = cellH;
+
+            if ((int)i == mCamThumbSel) {
+                Gfx::DrawRectRoundedOutline(tx - 4, ty - 4, cellW + 8, cellH + 8, 10,
+                                            Gfx::COLOR_WHITE, 3);
+            }
+                if (i < mCamThumbAudio.size() && mCamThumbAudio[i]) {
+                    const int icx = tx + cellW - 18;
+                    const int icy = ty + 18;
+                    Gfx::DrawCircleFilled(icx, icy, 14, {0x00, 0x00, 0x00, 0xaa});
+                    SDL_Color ic = Gfx::COLOR_WHITE;
+                    Gfx::DrawRectFilled(icx - 7, icy - 3, 4, 6, ic);
+                    for (int k = 0; k < 6; k++)
+                        Gfx::DrawRectFilled(icx - 3 + k, icy - 3 + k, 1, 6 - k * 2, ic);
+                    Gfx::DrawRectFilled(icx + 4, icy - 5, 2, 10, ic);
+                    Gfx::DrawRectFilled(icx + 7, icy - 7, 2, 14, ic);
+                }
+
+            if (IsClipEntry(mCamThumbNames[i])) {
+                const int badgeW = 46, badgeH = 22;
+                const int bx2 = tx + cellW - badgeW - 4;
+                const int by2 = ty + cellH - badgeH - 4;
+                Gfx::DrawRectRounded(bx2, by2, badgeW, badgeH, 5,
+                                     {0x00, 0x00, 0x00, 0xaa});
+                Gfx::Print(bx2 + badgeW / 2, by2 + badgeH / 2, 16, Gfx::COLOR_WHITE,
+                           "CLIP", Gfx::ALIGN_CENTER);
+            }
             if (i + 1 == mCamThumbs.size()) {
                 Gfx::DrawRectRoundedOutline(tx - 3, ty - 3, cellW + 6, cellH + 6, 10,
                                             Gfx::COLOR_ACCENT, 3);
             }
-            Gfx::DrawRectFilled(tx, ty, cellW, cellH, th.thumbPlaceholder);
-            Gfx::DrawTexture(mCamThumbs[i], tx, ty, cellW, cellH);
-            MaskRoundedCorners(tx, ty, cellW, cellH, 8, th.cardBg);
-            shown++;
         }
 
-        if (rows * CAM_THUMB_COLS < (int)mCamThumbs.size()) {
-            Gfx::Print(ix + iw, iy + rows * (cellH + CAM_THUMB_GAP) - CAM_THUMB_GAP,
-                       20, th.textDim, "+ older shots",
-                       Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
+        const int total = (int)mCamThumbs.size();
+        if (total > perPage && maxScroll > 0) {
+            const int trackX = ix + cols * (cellW + CAM_THUMB_GAP) + 10;
+            const int trackW = 6;
+            const int trackTop = iy + 2;
+            const int trackBot = iy + rows * (cellH + CAM_THUMB_GAP) - CAM_THUMB_GAP - 2;
+            const int trackH = trackBot - trackTop;
+            if (trackH > 12) {
+                Gfx::DrawRectRounded(trackX, trackTop, trackW, trackH, 3,
+                                     th.separator);
+
+                int thumbH = (int)((long)trackH * perPage / total);
+                if (thumbH < 26) thumbH = 26;
+                if (thumbH > trackH) thumbH = trackH;
+                const int thumbY = trackTop +
+                    (int)((long)(trackH - thumbH) * mCamThumbScroll / maxScroll);
+                Gfx::DrawRectRounded(trackX, thumbY, trackW, thumbH, 3,
+                                     Gfx::COLOR_ACCENT);
+            }
         }
     }
 }
@@ -935,9 +1294,12 @@ void Album::DrawCameraFooter() {
     if (CameraRunning()) {
         hints = {
             {CAM_HINT_SHUTTER, Glyphs::R.c_str(), Gfx::COLOR_ACCENT, "Shutter"},
+            {CAM_HINT_REC, Glyphs::L.c_str(),
+             mCamRecording ? Gfx::COLOR_BTN_B : Gfx::COLOR_ACCENT,
+             mCamRecording ? "Stop" : "Record"},
             {CAM_HINT_FLIP,    Glyphs::X.c_str(), Gfx::COLOR_BTN_X, mCameraMirror ? "Unflip" : "Flip"},
             {CAM_HINT_GRID,    Glyphs::Y.c_str(), Gfx::COLOR_BTN_Y, mCameraGrid ? "Hide grid" : "Grid"},
-            {CAM_HINT_FPS,     Glyphs::ZR.c_str(), Gfx::COLOR_ACCENT, fpsLabel.c_str()},
+            {CAM_HINT_FPS,     Glyphs::ZL.c_str(), Gfx::COLOR_ACCENT, fpsLabel.c_str()},
         };
     } else {
         hints = {
@@ -945,10 +1307,16 @@ void Album::DrawCameraFooter() {
         };
     }
     hints.push_back({CAM_HINT_BACK, Glyphs::B.c_str(), Gfx::COLOR_BTN_B, "Back"});
-    if (CameraRunning()) {
-        hints.push_back({CAM_HINT_REC, Glyphs::L.c_str(),
-                         mCamRecording ? Gfx::COLOR_BTN_B : Gfx::COLOR_ACCENT,
-                         mCamRecording ? "Stop" : "Record"});
+    hints.push_back({CAM_HINT_SETTINGS, Glyphs::PLUS.c_str(), Gfx::COLOR_ACCENT,
+                     "Settings"});
+    hints.push_back({CAM_HINT_FULLSCREEN, Glyphs::MINUS.c_str(), Gfx::COLOR_ACCENT,
+                     mCamFullscreen ? "Exit fullscreen" : "Fullscreen"});
+    hints.push_back({CAM_HINT_WIDE, Glyphs::ZR.c_str(), Gfx::COLOR_ACCENT,
+                     mCamWide ? "Standard" : "Wide"});
+
+    if (mCamThumbSel >= 0 && (int)mCamThumbs.size() > 0) {
+        hints.push_back({CAM_HINT_OPEN, Glyphs::A.c_str(), Gfx::COLOR_BTN_A,
+                         "Open"});
     }
 
     for (const auto& h : hints) {
@@ -992,6 +1360,10 @@ void Album::DrawCamera() {
     Uint32 drawStart = SDL_GetTicks();
 
     Gfx::Clear(th.bg);
+
+    const bool fs = mCamFullscreen;
+
+    if (!fs) {
     Gfx::DrawRectFilled(0, 0, Gfx::SCREEN_WIDTH, CAM_HEADER_H, th.headerBg);
     Gfx::DrawRectFilled(0, CAM_HEADER_H - 1, Gfx::SCREEN_WIDTH, 1, th.separator);
 
@@ -1005,43 +1377,48 @@ void Album::DrawCamera() {
     Gfx::Print(ix + iw + 16, ty, 30, th.text, "Camera",
                Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
-    if (mCamShotsTaken > 0) {
-        Gfx::Print(Gfx::SCREEN_WIDTH - 30, ty, 24, th.textDim,
-                   std::to_string(mCamShotsTaken) + " photo" +
-                   (mCamShotsTaken == 1 ? "" : "s") + " saved this session",
-                   Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
-    }
     {
         std::string micText;
         SDL_Color micColor = th.textDim;
-        if (mCamRecording) {
+        if (!mSettingsCamMic) {
+            micText = "Mic: disabled";
+        } else if (mCamRecording) {
             micText  = mMicReady ? "Mic: recording" : "Mic: unavailable";
             micColor = mMicReady ? CAM_REC_RED : Gfx::COLOR_BTN_Y;
         } else {
+            micText = mMicReady ? "Mic: ready"
+                                : (mMicError.empty() ? "Mic: off" : mMicError);
         }
         int titleX = ix + iw + 16;
         Gfx::Print(titleX + Gfx::GetTextWidth(30, "Camera") + 36, ty, 22,
                    micColor, micText, Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
     }
+    }
 
-    const int panelW = 620;
-    const int mainTop = CAM_HEADER_H + 14;
-    const int mainH   = Gfx::SCREEN_HEIGHT - CAM_FOOTER_H - mainTop - 14;
-    const int previewMaxW = Gfx::SCREEN_WIDTH - panelW - CAM_MARGIN * 3;
+    const int panelW = fs ? 0 : 620;
+    const int mainTop = fs ? 0 : CAM_HEADER_H + 14;
+    const int mainH   = Gfx::SCREEN_HEIGHT - CAM_FOOTER_H - mainTop - (fs ? 0 : 14);
+    const int previewMaxW = fs ? Gfx::SCREEN_WIDTH : Gfx::SCREEN_WIDTH - panelW - CAM_MARGIN * 3;
+
+    const int aspW = mCamWide ? 16 : Camera::WIDTH;
+    const int aspH = mCamWide ? 9  : Camera::HEIGHT;
 
     int pw = previewMaxW;
-    int ph = pw * Camera::HEIGHT / Camera::WIDTH;
+    int ph = pw * aspH / aspW;
     if (ph > mainH) {
         ph = mainH;
-        pw = ph * Camera::WIDTH / Camera::HEIGHT;
+        pw = ph * aspW / aspH;
     }
-    int px = CAM_MARGIN + (previewMaxW - pw) / 2;
+    int px = fs ? (Gfx::SCREEN_WIDTH - pw) / 2
+                : CAM_MARGIN + (previewMaxW - pw) / 2;
     int py = mainTop + (mainH - ph) / 2;
 
     DrawCameraPreview(px, py, pw, ph);
 
-    int panelX = px + pw + 28;
-    DrawCameraSidePanel(panelX, mainTop, panelW, mainH);
+    if (!fs) {
+        int panelX = px + pw + 28;
+        DrawCameraSidePanel(panelX, mainTop, panelW, mainH);
+    }
 
     DrawCameraFooter();
 
@@ -1107,8 +1484,8 @@ void Album::DrawCamera() {
         Gfx::Print(bx + 118, by + bh / 2, 26, Gfx::COLOR_WHITE, recTime,
                    Gfx::ALIGN_LEFT | Gfx::ALIGN_VERTICAL);
 
-        std::string stats = std::to_string(mRecorder.GetFrameCount()) + "f  " +
-                            std::to_string((unsigned)(mRecorder.GetBytesWritten() / 1024)) + "KB";
+        std::string stats = std::to_string((unsigned)(mRecorder.GetBytesWritten() / 1024)) + "KB";
+        
         Gfx::Print(bx + bw - 22, by + bh / 2, 22, {0xdd, 0xdd, 0xdd, 0xff}, stats,
                    Gfx::ALIGN_RIGHT | Gfx::ALIGN_VERTICAL);
     }

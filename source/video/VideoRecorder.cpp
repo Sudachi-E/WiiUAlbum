@@ -59,7 +59,13 @@ VideoRecorder::VideoRecorder() {}
 VideoRecorder::~VideoRecorder() { Stop(); }
 
 double VideoRecorder::GetDuration() const {
-    return mFps > 0 ? (double)mFrameCount.load() / (double)mFps : 0.0;
+    const uint32_t frames = mFrameCount.load();
+    if (!frames) return 0.0;
+    if (mFramePeriodUs > 0)
+        return (double)frames * (double)mFramePeriodUs / 1000000.0;
+    if (mRecording && mStartTicks)
+        return (double)(SDL_GetTicks() - mStartTicks) / 1000.0;
+    return (double)frames / (double)mFps;
 }
 
 bool VideoRecorder::Start(const std::string& path, int width, int height, int fps) {
@@ -308,6 +314,12 @@ void VideoRecorder::PatchSizes() {
 
     const uint32_t frames = mFrameCount.load();
 
+    uint32_t videoChunks = 0;
+    for (const auto& e : mIndex) if (memcmp(e.id, "00dc", 4) == 0) videoChunks++;
+    if (videoChunks != frames)
+        ALBUM_ERROR("[REC] frame count mismatch: %u written, %u declared",
+                    videoChunks, frames);
+
     const uint32_t storedSamples = mAudioSamples.load();
     uint32_t audioLength = storedSamples;
 
@@ -321,6 +333,7 @@ void VideoRecorder::PatchSizes() {
     const uint32_t framePeriodUs =
         (uint32_t)(videoSecs * 1000000.0 / (double)frames + 0.5);
     const double actualFps = framePeriodUs ? (1000000.0 / framePeriodUs) : 0.0;
+    mFramePeriodUs = framePeriodUs;
 
     uint32_t audioRate = (uint32_t)MicCapture::SAMPLE_RATE;
     if (mHasAudio && elapsedSecs > 0.05 && storedSamples > 0) {
@@ -388,9 +401,9 @@ EndChunk(mFile, mMoviSizeOff);
 
     const double audioSecs = mHasAudio
         ? (double)audioLength / ((double)audioRate * MicCapture::CHANNELS) : 0.0;
-    ALBUM_LOG("[REC] layout: frames=%u idxEntries=%u moviDataStart=%ld "
+    ALBUM_LOG("[REC] layout: frames=%u videoChunks=%u idxEntries=%u moviDataStart=%ld "
               "framePeriod=%uus (%.2f fps actual, %d requested)",
-              frames, (unsigned)mIndex.size(), mMoviDataStart,
+              frames, videoChunks, (unsigned)mIndex.size(), mMoviDataStart,
               framePeriodUs, actualFps, mFps);
     ALBUM_LOG("[REC] track lengths: video=%.2fs (%u frames) audio=%.2fs "
               "(%u samples, %d ch @%u Hz)", videoSecs, frames, audioSecs,
@@ -532,15 +545,50 @@ bool VideoRecorder::EncodeJpeg(const uint8_t* rgba, int pitch) {
     return mJpegSize > 0;
 }
 
-void VideoRecorder::PushFrame(const uint8_t* rgba, int pitch) {
-    if (!mRecording || !rgba) return;
+void BrightenRgba(uint8_t* pixels, int w, int h, int stride) {
+    if (!pixels || w <= 0 || h <= 0) return;
+    const int GAIN_NUM = 5, GAIN_DEN = 4;
+    const int LIFT = 24;
+
+    for (int y = 0; y < h; y++) {
+        uint8_t* p = pixels + (size_t)y * (size_t)stride;
+        for (int x = 0; x < w; x++, p += 4) {
+            for (int c = 0; c < 3; c++) {
+                int v = (p[c] * GAIN_NUM) / GAIN_DEN + LIFT;
+                p[c] = (uint8_t)(v > 255 ? 255 : v);
+            }
+        }
+    }
+}
+
+void VideoRecorder::PushFrame(const uint8_t* rgba, int pitch, int srcW, int srcH) {
+    if (!mRecording || !rgba || srcW <= 0 || srcH <= 0) return;
+    if (mWidth <= 0 || mHeight <= 0) return;
+
+    if ((int)mXMap.size() != mWidth) {
+        mXMap.resize(mWidth);
+        for (int col = 0; col < mWidth; col++) mXMap[col] = col * srcW / mWidth;
+    }
+    const bool sameSize = (srcW == mWidth && srcH == mHeight);
 
     for (int i = 0; i < STAGING_SLOTS; i++) {
         if (mStagingState[i].load() != 0 || !mStaging[i]) continue;
-        for (int row = 0; row < mHeight; row++)
-            memcpy(mStaging[i] + (size_t)row * mWidth * 4,
-                   rgba + (size_t)row * pitch,
-                   (size_t)mWidth * 4);
+
+        if (sameSize) {
+            for (int row = 0; row < mHeight; row++)
+                memcpy(mStaging[i] + (size_t)row * mWidth * 4,
+                       rgba + (size_t)row * pitch,
+                       (size_t)mWidth * 4);
+        } else {
+            for (int row = 0; row < mHeight; row++) {
+                int sy = row * srcH / mHeight;
+                if (sy >= srcH) sy = srcH - 1;
+                const uint8_t* s = rgba + (size_t)sy * pitch;
+                uint8_t* d = mStaging[i] + (size_t)row * mWidth * 4;
+                for (int col = 0; col < mWidth; col++)
+                    memcpy(d + (size_t)col * 4, s + (size_t)mXMap[col] * 4, 4);
+            }
+        }
         mStagingState[i].store(1);
         return;
     }
@@ -555,10 +603,12 @@ void VideoRecorder::RecorderThread() {
         for (int i = 0; i < STAGING_SLOTS; i++) {
             if (mStagingState[i].load() != 1 || !mStaging[i]) continue;
             mStagingState[i].store(2);
-            if (EncodeJpeg(mStaging[i], mWidth * 4))
-                WriteVideoChunk(mJpegBuf, (size_t)mJpegSize);
+            if (mBrighten)
+                BrightenRgba(mStaging[i], mWidth, mHeight, mWidth * 4);
+            if (EncodeJpeg(mStaging[i], mWidth * 4) &&
+                WriteVideoChunk(mJpegBuf, (size_t)mJpegSize))
+                mFrameCount.fetch_add(1);
             mStagingState[i].store(0);
-            mFrameCount.fetch_add(1);
             didWork = true;
         }
 
@@ -577,9 +627,11 @@ void VideoRecorder::RecorderThread() {
 
     for (int i = 0; i < STAGING_SLOTS; i++) {
         if (mStagingState[i].load() == 1 && mStaging[i]) {
-            if (EncodeJpeg(mStaging[i], mWidth * 4))
-                WriteVideoChunk(mJpegBuf, (size_t)mJpegSize);
-            mFrameCount.fetch_add(1);
+            if (mBrighten)
+                BrightenRgba(mStaging[i], mWidth, mHeight, mWidth * 4);
+            if (EncodeJpeg(mStaging[i], mWidth * 4) &&
+                WriteVideoChunk(mJpegBuf, (size_t)mJpegSize))
+                mFrameCount.fetch_add(1);
             mStagingState[i].store(0);
         }
     }
@@ -748,7 +800,13 @@ void VideoRecorder::ValidateFile(const std::string& path) {
     if (fread(cc, 1, 4, f) != 4) cc[0] = '\0';
     cc[4] = '\0';
     check(strcmp(cc, "idx1") == 0, "idx1 tag");
-    const uint32_t idxSize = le32(ftell(f));
+    uint32_t idxSize = 0;
+    {
+        uint8_t b[4];
+        if (fread(b, 1, 4, f) == 4)
+            idxSize = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                      ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    }
     check(idxSize % 16 == 0, "idx1 size is a multiple of 16");
     check((long)idxSize == (long)mIndex.size() * 16, "idx1 entry count matches");
     check(moviEnd + 8 + (long)idxSize == fileSize, "idx1 runs to end of file");

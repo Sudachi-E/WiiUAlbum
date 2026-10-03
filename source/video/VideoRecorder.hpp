@@ -9,6 +9,8 @@
 
 class MicCapture;
 
+void BrightenRgba(uint8_t* pixels, int w, int h, int stride);
+
 class VideoRecorder {
 public:
     VideoRecorder();
@@ -20,10 +22,13 @@ public:
 
     void ValidateFile(const std::string& path);
 
-    void PushFrame(const uint8_t* rgba, int pitch);
+    void PushFrame(const uint8_t* rgba, int pitch, int srcW, int srcH);
 
-    // Mic transfers to the recorder while it is running.
     void SetMic(MicCapture* mic) { mMic = mic; }
+
+    bool HasAudio() const { return mHasAudio; }
+
+    void SetBrighten(bool on) { mBrighten = on; }
 
     uint32_t       GetFrameCount() const { return mFrameCount.load(); }
     uint32_t       GetBytesWritten() const { return mBytesWritten.load(); }
@@ -32,6 +37,8 @@ public:
     const std::string& GetError() const { return mError; }
 
 private:
+    bool mBrighten = false;
+
     struct IndexEntry {
         char     id[4];
         uint32_t flags;
@@ -76,6 +83,7 @@ private:
     int64_t  mAudioSum = 0;
     uint32_t mAudioStatCount = 0;
     uint32_t mStartTicks = 0;
+    uint32_t mFramePeriodUs = 0;
 
     std::atomic<uint32_t> mFrameCount{0};
     std::atomic<uint32_t> mAudioSamples{0};
@@ -86,9 +94,9 @@ private:
 
     static constexpr int STAGING_SLOTS = 2;
     uint8_t* mStaging[STAGING_SLOTS] = {nullptr, nullptr};
+    std::vector<int> mXMap;
     std::atomic<int> mStagingState[STAGING_SLOTS];
 
-    // JPEG encoder state, reused between frames.
     void* mJpegComp = nullptr;
     void* mJpegErr  = nullptr;
     unsigned char* mJpegBuf  = nullptr;

@@ -1,4 +1,4 @@
-#include "Album.hpp"
+﻿#include "Album.hpp"
 #include "../camera/CameraCapture.hpp"
 #include "../ui/Log.hpp"
 #include <dirent.h>
@@ -114,6 +114,8 @@ Album::Album(const char* sdRoot) {
     SDL_AtomicSet(&mClipEncodingDone, 1);
     mPathScreenshots = std::string(sdRoot) + "/wiiu/screenshots";
     mPathVideos      = std::string(sdRoot) + "/wiiu/screencaptures";
+    mPathCamPhotos   = mPathScreenshots + "/Camera photos";
+    mPathCamVideos   = mPathVideos      + "/Camera recordings";
 
     WHBLogPrintf("[ALBUM] Screenshot path: %s", mPathScreenshots.c_str());
     WHBLogPrintf("[ALBUM] Video path:      %s", mPathVideos.c_str());
@@ -179,6 +181,7 @@ void Album::ScanMedia() {
 }
 
 void Album::Refresh() {
+    mCamReturnToCamera = false;
     if (mViewerState != ViewerState::None) CloseViewer();
 
     StopThumbWorkers();
@@ -200,7 +203,7 @@ void Album::Refresh() {
 
     StartThumbWorkers();
 
-    WHBLogPrintf("[ALBUM] Album refreshed — %d items found", (int)mAllItems.size());
+    WHBLogPrintf("[ALBUM] Album refreshed â€” %d items found", (int)mAllItems.size());
 }
 
 void Album::ApplyFilterSort() {
@@ -208,8 +211,30 @@ void Album::ApplyFilterSort() {
     mFiltered.clear();
     for (int i = 0; i < (int)mAllItems.size(); i++) {
         const auto& item = mAllItems[i];
-        if (mFilter == FilterMode::Screenshots && item.type != MediaType::Screenshot) continue;
-        if (mFilter == FilterMode::Videos      && item.type != MediaType::Video)      continue;
+
+        const bool isCamPhoto = item.type == MediaType::Screenshot &&
+            item.path.compare(0, mPathCamPhotos.size(), mPathCamPhotos) == 0;
+        const bool isCamClip = item.type == MediaType::Video &&
+            item.path.compare(0, mPathCamVideos.size(), mPathCamVideos) == 0;
+
+        switch (mFilter) {
+            case FilterMode::Screenshots:
+                if (item.type != MediaType::Screenshot || isCamPhoto) continue;
+                break;
+            case FilterMode::Videos:
+                if (item.type != MediaType::Video || isCamClip) continue;
+                break;
+            case FilterMode::Photos:
+                if (!isCamPhoto) continue;
+                break;
+            case FilterMode::Recordings:
+                if (!isCamClip) continue;
+                break;
+            case FilterMode::All:
+            default:
+                break;
+        }
+
         if (!mFilterApp.empty() && item.appName != mFilterApp) continue;
         mFiltered.push_back(i);
     }
@@ -339,9 +364,10 @@ void Album::SaveConfig() const {
     if (!f) return;
     fprintf(f, "filter=%d\nsort=%d\nfilter_app=%s\ndark_mode=%d\n",
             (int)mFilter, (int)mSort, mFilterApp.c_str(), mSettingsDarkMode ? 1 : 0);
-    fprintf(f, "cam_mirror=%d\ncam_fps=%d\ncam_grid=%d\ncam_source=%d\n",
+    fprintf(f, "cam_mirror=%d\ncam_fps=%d\ncam_grid=%d\ncam_source=%d\n"
+               "cam_bright=%d\ncam_mic=%d\n",
             mSettingsCamMirror ? 1 : 0, mSettingsCamFps, mSettingsCamGrid ? 1 : 0,
-            mSettingsCamSource);
+            mSettingsCamSource, mCamBrightenOn ? 1 : 0, mSettingsCamMic ? 1 : 0);
     fclose(f);
     WHBLogPrintf("[ALBUM] Config saved to %s", file.c_str());
 }
@@ -381,9 +407,16 @@ void Album::LoadConfig() {
     if (fgets(line, sizeof(line), f)) {
         sscanf(line, "cam_source=%d", &camSourceVal);
     }
+    int camBrightVal = 1, camMicVal = 1;
+    if (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "cam_bright=%d", &camBrightVal) != 1) camBrightVal = 1;
+    }
+    if (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "cam_mic=%d", &camMicVal) != 1) camMicVal = 1;
+    }
     fclose(f);
 
-    if (filterVal >= 0 && filterVal <= 2) mFilter = (FilterMode)filterVal;
+    if (filterVal >= 0 && filterVal < FILTER_TYPE_ROWS) mFilter = (FilterMode)filterVal;
     if (sortVal   >= 0 && sortVal   <= 1) mSort   = (SortOrder)sortVal;
     if (appBuf[0]) mFilterApp = appBuf;
     mSettingsDarkMode  = (darkVal != 0);
@@ -391,11 +424,14 @@ void Album::LoadConfig() {
     mSettingsCamFps    = (camFpsVal == 15) ? 15 : 30;
     mSettingsCamGrid   = (camGridVal != 0);
     mSettingsCamSource = (camSourceVal == 1) ? 1 : 0;
+    mCamBrightenOn    = (camBrightVal != 0);
+    mSettingsCamMic   = (camMicVal != 0);
     Gfx::SetDarkMode(mSettingsDarkMode);
 
-    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d dark_mode=%d cam=%d/%dfps/grid%d/src%d",
+    WHBLogPrintf("[ALBUM] Config loaded: filter=%d sort=%d dark_mode=%d cam=%d/%dfps/grid%d/src%d/bright%d/mic%d",
                  filterVal, sortVal, darkVal, camMirrorVal, mSettingsCamFps,
-                 mSettingsCamGrid ? 1 : 0, mSettingsCamSource);
+                 mSettingsCamGrid ? 1 : 0, mSettingsCamSource,
+                 mCamBrightenOn ? 1 : 0, mSettingsCamMic ? 1 : 0);
 }
 
 std::string Album::FormatDuration(uint32_t sec) {
@@ -422,6 +458,8 @@ std::string Album::GetFilterStr() const {
     switch (mFilter) {
         case FilterMode::Screenshots: return "Screenshots";
         case FilterMode::Videos:      return "Videos";
+        case FilterMode::Photos:      return "Photos";
+        case FilterMode::Recordings:  return "Recordings";
         default:                      return "All";
     }
 }
@@ -431,7 +469,7 @@ void Album::OpenOverlay(Overlay o) {
     if (o == Overlay::Filter) {
         if (!mFilterApp.empty()) {
             auto it = std::find(mAppNames.begin(), mAppNames.end(), mFilterApp);
-            mOverlaySel = (it != mAppNames.end()) ? (4 + (int)(it - mAppNames.begin())) : 0;
+            mOverlaySel = (it != mAppNames.end()) ? (FILTER_FIRST_APP_ROW + (int)(it - mAppNames.begin())) : 0;
         } else {
             mOverlaySel = (int)mFilter;
         }
@@ -526,6 +564,11 @@ void Album::Update(const Input& input) {
         HandleTouch(input);
         UpdatePointerPosition(input);
         HandlePointer(input);
+        if (mSettingsOpen) {
+            UpdateCamera(input, false);
+            UpdateSettings(input);
+            return;
+        }
         UpdateCamera(input);
         return;
     }
@@ -595,7 +638,17 @@ void Album::Update(const Input& input) {
             return;
         }
 
-        if (input.IsPressed(Input::BUTTON_LEFT)) {
+        int dirH = 0, dirV = 0;
+        if (input.IsHeld(Input::BUTTON_RIGHT)) dirH =  1;
+        if (input.IsHeld(Input::BUTTON_LEFT))  dirH = -1;
+        if (input.IsHeld(Input::BUTTON_DOWN))  dirV =  1;
+        if (input.IsHeld(Input::BUTTON_UP))    dirV = -1;
+
+        const Uint32 repNow = SDL_GetTicks();
+        const int stepH = mGridRepeatH.Update(dirH, repNow);
+        const int stepV = mGridRepeatV.Update(dirV, repNow);
+
+        if (stepH < 0) {
             if (mGridCursor % COLS == 0) {
                 if (mMultiSelect) { ExitMultiSelect(); mSidebarFocus = true; }
                 else if (mTransferMultiSelect) { mTransferMultiSelect = false; mTransferSelected.clear(); mTransferSelectCount = 0; mSidebarFocus = true; }
@@ -604,11 +657,11 @@ void Album::Update(const Input& input) {
                 mGridCursor--;
             }
         }
-        if (input.IsPressed(Input::BUTTON_RIGHT)) {
+        if (stepH > 0) {
             if (mGridCursor % COLS < COLS - 1 && mGridCursor + 1 < total)
                 mGridCursor++;
         }
-        if (input.IsPressed(Input::BUTTON_UP)) {
+        if (stepV < 0) {
             if (mGridCursor - COLS >= 0) {
                 mGridCursor -= COLS;
             } else {
@@ -619,7 +672,7 @@ void Album::Update(const Input& input) {
                 mGridCursor = candidate;
             }
         }
-        if (input.IsPressed(Input::BUTTON_DOWN)) {
+        if (stepV > 0) {
             if (mGridCursor + COLS < total) {
                 mGridCursor += COLS;
             } else {
@@ -700,6 +753,11 @@ void Album::Update(const Input& input) {
 }
 
 void Album::Draw() {
+    if (mSettingsOpen) {
+        DrawSettings();
+        return;
+    }
+
     if (mCameraActive) {
         DrawCamera();
         return;
@@ -707,11 +765,6 @@ void Album::Draw() {
 
     if (mQRState != QRState::Inactive) {
         DrawQRTransfer();
-        return;
-    }
-
-    if (mSettingsOpen) {
-        DrawSettings();
         return;
     }
 
@@ -1091,7 +1144,7 @@ bool Album::HandleOverlayClick(int px, int py) {
     int slot, numItems, itemH;
     switch (mOverlay) {
         case Overlay::QuickAccess: slot = 0; numItems = 4; itemH = 42; break;
-        case Overlay::Filter:      slot = 1; numItems = 3 + 1 + (int)mAppNames.size(); itemH = 42; break;
+        case Overlay::Filter:      slot = 1; numItems = FILTER_TYPE_ROWS + 1 + (int)mAppNames.size(); itemH = 42; break;
         case Overlay::Sort:        slot = 2; numItems = 2; itemH = 42; break;
         default: return false;
     }
@@ -1109,7 +1162,7 @@ bool Album::HandleOverlayClick(int px, int py) {
 
     int yo = panelY + 10;
     for (int i = 0; i < numItems; i++) {
-        if (i == 3) { yo += 16; continue; }
+        if (i == FILTER_TYPE_ROWS) { yo += 16; continue; }
         if (TouchHitRect(px, py, panelX + 6, yo, PW - 12, itemH - 4)) {
             mOverlaySel = i;
             Uint32 now = SDL_GetTicks();
@@ -1119,12 +1172,13 @@ bool Album::HandleOverlayClick(int px, int py) {
             mTouchLastOverlayTapTime = now;
 
             if (mOverlay == Overlay::Filter) {
-                if (i < 3) {
+                if (i < FILTER_TYPE_ROWS) {
                     mFilter = (FilterMode)i;
                     mFilterApp.clear();
                 } else {
                     mFilter = FilterMode::All;
-                    mFilterApp = (i >= 4) ? mAppNames[i - 4] : "";
+                    mFilterApp = (i >= FILTER_FIRST_APP_ROW)
+                               ? mAppNames[i - FILTER_FIRST_APP_ROW] : "";
                 }
                 ApplyFilterSort();
                 SaveConfig();

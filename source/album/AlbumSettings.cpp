@@ -1,14 +1,17 @@
-#include "Album.hpp"
+﻿#include "Album.hpp"
 #include "../ui/Glyphs.hpp"
 #include <whb/log.h>
 
 static const char* kCategories[] = { "Display", "Camera" };
 static constexpr int NUM_CATEGORIES = 2;
 
+static constexpr int DISPLAY_ITEMS = 1;
+static constexpr int CAMERA_ITEMS  = 6;
+
 static int GetItemCount(int cat) {
     switch (cat) {
-        case 0: return 1;
-        case 1: return 5;
+        case 0: return DISPLAY_ITEMS;
+        case 1: return CAMERA_ITEMS;
         default: return 0;
     }
 }
@@ -17,12 +20,12 @@ static constexpr int CAT_W       = 340;
 static constexpr int CAT_ITEM_H  = 76;
 static constexpr int CAT_START_Y = 72 + 16;
 
-void Album::OpenSettings() {
+void Album::OpenSettings(int category) {
     mSettingsOpen     = true;
     mSettingsCatFocus = true;
-    mSettingsCatSel   = 0;
+    mSettingsCatSel   = category;
     mSettingsItemSel  = 0;
-    WHBLogPrintf("[SETTINGS] Opened");
+    WHBLogPrintf("[SETTINGS] Opened on category %d", category);
 }
 
 void Album::CloseSettings() {
@@ -73,6 +76,15 @@ void Album::UpdateSettings(const Input& input) {
                     case 1: mSettingsCamFps    = (mSettingsCamFps >= 30) ? 15 : 30; break;
                     case 2: mSettingsCamGrid   = !mSettingsCamGrid; break;
                     case 3: mSettingsCamSource = mSettingsCamSource ? 0 : 1; break;
+                    case 4: mCamBrightenOn = !mCamBrightenOn; break;
+                    case 5:
+                        mSettingsCamMic = !mSettingsCamMic;
+                        if (mCameraActive) {
+                            ApplyMicSetting();
+                            if (mCamRecording)
+                                mRecorder.SetMic(mMicReady ? &mMic : nullptr);
+                        }
+                        break;
                     default: break;
                 }
                 SaveConfig();
@@ -178,7 +190,7 @@ void Album::DrawSettingsContent(int contentX, int contentW, int contentY) {
 
     } else if (mSettingsCatSel == 1) {
         struct Row { const char* label; std::string value; bool isToggle; bool on; };
-        Row rows[4] = {
+        Row rows[CAMERA_ITEMS] = {
             {"Mirror Preview",   mSettingsCamMirror ? "On" : "Off",
              true,  mSettingsCamMirror},
             {"Frame Rate",       std::to_string(mSettingsCamFps) + " fps",
@@ -187,9 +199,13 @@ void Album::DrawSettingsContent(int contentX, int contentW, int contentY) {
              true,  mSettingsCamGrid},
             {"Camera Source",    mSettingsCamSource ? "USB / DLC" : "GamePad",
              false, true},
+            {"Low Light Boost",  mCamBrightenOn ? "On" : "Off",
+             true,  mCamBrightenOn},
+            {"Microphone",      mSettingsCamMic ? "On" : "Off",
+             true,  mSettingsCamMic},
         };
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < CAMERA_ITEMS; i++) {
             int iy  = contentY + i * ITEM_H;
             bool sel = (!mSettingsCatFocus && mSettingsItemSel == i);
 
@@ -208,10 +224,10 @@ void Album::DrawSettingsContent(int contentX, int contentW, int contentY) {
             }
         }
 
-        Gfx::Print(contentX, contentY + 4 * ITEM_H + 16, 22, th.textDim,
+        Gfx::Print(contentX, contentY + 4 * ITEM_H + 195, 22, th.textDim,
                    "These are the defaults the camera starts with; they can also",
                    Gfx::ALIGN_LEFT);
-        Gfx::Print(contentX, contentY + 4 * ITEM_H + 46, 22, th.textDim,
+        Gfx::Print(contentX, contentY + 4 * ITEM_H + 230, 22, th.textDim,
                    "be changed while the camera is open.",
                    Gfx::ALIGN_LEFT);
     }

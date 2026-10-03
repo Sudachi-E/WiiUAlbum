@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../ui/Gfx.hpp"
 #include "../ui/Input.hpp"
@@ -13,6 +13,37 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+
+struct DpadRepeat {
+    static constexpr Uint32 kInitialDelayMs = 320;
+    static constexpr Uint32 kFastMs          = 70;
+    static constexpr Uint32 kSlowMs          = 260;
+
+    int      dir      = 0;
+    Uint32   nextAt   = 0;
+    Uint32   holdFrom = 0;
+
+    int Update(int heldDir, Uint32 now) {
+        if (heldDir == 0) {
+            dir = 0;
+            return 0;
+        }
+        if (heldDir != dir) {
+            dir      = heldDir;
+            holdFrom = now;
+            nextAt   = now + kInitialDelayMs;
+            return heldDir;
+        }
+        if (now < nextAt) return 0;
+
+        Uint32 interval = kSlowMs - (now - holdFrom) / 8;
+        if (interval < kFastMs) interval = kFastMs;
+        nextAt = now + interval;
+        return heldDir;
+    }
+
+    void Reset() { dir = 0; }
+};
 
 enum class MediaType { Screenshot, Video };
 
@@ -29,7 +60,10 @@ struct MediaItem {
     bool         thumbRequested = false;
 };
 
-enum class FilterMode { All, Screenshots, Videos };
+enum class FilterMode { All, Screenshots, Videos, Photos, Recordings };
+
+static constexpr int FILTER_TYPE_ROWS = 5;
+static constexpr int FILTER_FIRST_APP_ROW = FILTER_TYPE_ROWS + 1;
 enum class SortOrder  { NewestFirst, OldestFirst };
 
 enum class Overlay { None, Filter, Sort, Settings, DeleteConfirm, TransferMode, QuickAccess };
@@ -67,6 +101,8 @@ private:
     Overlay  mOverlay     = Overlay::None;
 
     int      mGridCursor  = 0;
+    DpadRepeat mGridRepeatH;
+    DpadRepeat mGridRepeatV;
     int      mScrollRow   = 0;
 
     static constexpr int COLS     = 4;
@@ -196,7 +232,7 @@ private:
     int  mSettingsCatSel       = 0;
     int  mSettingsItemSel      = 0;
 
-    void OpenSettings();
+    void OpenSettings(int category = 0);
     void CloseSettings();
     void UpdateSettings(const Input& input);
     void DrawSettings();
@@ -206,6 +242,8 @@ private:
     std::string mScanDiagnostics;
     std::string mPathScreenshots;
     std::string mPathVideos;
+    std::string mPathCamPhotos;
+    std::string mPathCamVideos;
 
     QRState         mQRState        = QRState::Inactive;
     int             mQRItemIdx      = -1;
@@ -283,13 +321,16 @@ private:
     static constexpr int CAM_THUMB_H    = 114;
     static constexpr int CAM_THUMB_GAP  = 14;
     static constexpr int CAM_THUMB_COLS = 4;
-    static constexpr int CAM_MAX_THUMBS = 12;
+    static constexpr int CAM_MAX_THUMBS = 256;
     static constexpr int CAM_HEADER_H   = 72;
     static constexpr int CAM_FOOTER_H   = 84;
     static constexpr int CAM_MARGIN     = 30;
 
     bool         mCameraActive     = false;
+    bool         mCamFullscreen   = false;
+    bool         mCamWide        = false;
     bool         mCamDiagOverlay  = false;
+    bool         mCamBrightenOn      = true;
     SDL_Texture* mCameraTexture    = nullptr;
     uint32_t     mCamUploadErrors = 0;
     std::string  mCamUploadLastError;
@@ -317,10 +358,31 @@ private:
     int          mCamShotsTaken    = 0;
     std::vector<SDL_Texture*> mCamThumbs;
     std::vector<std::string>  mCamThumbNames;
+    std::vector<uint8_t>      mCamThumbAudio;
+
+    int mCamThumbSel    = -1;
+    int mCamThumbScroll = 0;
+    DpadRepeat mCamThumbRepeatH;
+    DpadRepeat mCamThumbRepeatV;
+    int mCamThumbRows   = 2;
+    int mCamThumbCols  = 3;
+    int mCamThumbRect[CAM_MAX_THUMBS][4] = {};
+
+    bool mCamReturnToCamera = false;
+
+    bool mCamKeepThumbs = false;
+
+    std::vector<int> mCamViewerSet;
+    int ViewerStep(int dir) const;
+    void RebuildCamViewerSet();
+
+    void UpdateCameraThumbs(const Input& input);
+    void OpenCameraThumb(int idx);
+    void AddCameraThumb(SDL_Surface* frame, const std::string& path, bool hasAudio);
 
     void EnterCameraMode();
-    void ExitCameraMode();
-    void UpdateCamera(const Input& input);
+    void ExitCameraMode(bool keepThumbs = false);
+    void UpdateCamera(const Input& input, bool handleInput = true);
     void UploadCameraFrame(SDL_Surface* frame);
     void DrawCameraFooter();
     void TriggerCameraHint(int index);
@@ -334,6 +396,7 @@ private:
     void StopCameraRecording(bool notify = true);
     void ClearCameraThumbs();
     void ApplyCameraSettings();
+    void ApplyMicSetting();
     void WriteCameraDiagnostics(const char* tag);
     void RecordCameraFrameTiming(Uint32 frameMs, Uint32 drawMs);
     bool HandleCameraTouch(int px, int py);
@@ -346,8 +409,12 @@ private:
     static constexpr int CAM_HINT_FPS     = 3;
     static constexpr int CAM_HINT_BACK    = 4;
     static constexpr int CAM_HINT_DIAG    = 5;
-    static constexpr int CAM_HINT_REC    = 6;
-    static constexpr int CAM_HINT_COUNT   = 7;
+static constexpr int CAM_HINT_REC    = 6;
+    static constexpr int CAM_HINT_OPEN   = 7;
+    static constexpr int CAM_HINT_SETTINGS = 8;
+    static constexpr int CAM_HINT_FULLSCREEN = 9;
+    static constexpr int CAM_HINT_WIDE      = 10;
+    static constexpr int CAM_HINT_COUNT  = 11;
     int  mCamHintRect[CAM_HINT_COUNT][4] = {};
 
     VideoRecorder mRecorder;
@@ -365,6 +432,7 @@ private:
     bool mSettingsCamGrid   = true;
     int  mSettingsCamFps    = 30;
     int  mSettingsCamSource = 0;   // 0 = GamePad camera, 1 = USB camera
+    bool mSettingsCamMic   = true;
 
     void HandleTouch(const Input& input);
     int  TouchHitTestGrid(int tx, int ty) const;

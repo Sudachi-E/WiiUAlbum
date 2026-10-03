@@ -30,7 +30,10 @@ int main(int argc, char const* argv[]) {
     AXInit();
     AXQuit();
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     VPADInit();
+#pragma GCC diagnostic pop
     KPADInit();
     LOG("VPAD/KPAD init done");
 
@@ -101,7 +104,10 @@ int main(int argc, char const* argv[]) {
 
     KPADShutdown();
     netconf_close();
+    #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     VPADShutdown();
+#pragma GCC diagnostic pop
 
     LOG("Calling WHBProcShutdown");
     WHBProcShutdown();
